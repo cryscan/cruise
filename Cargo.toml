@@ -4,6 +4,6 @@ name = "cruise"
 version = "0.1.0"
 
 [dependencies]
-ai00-core = "0.5.12"
-serde = "1"
-tokio = "1.43"
+bevy = "0.15"
+reqwest = "0.12.12"
+serde = { version = "1", features = ["derive"] }
