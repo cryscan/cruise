@@ -7,3 +7,4 @@ version = "0.1.0"
 bevy = "0.15"
 reqwest = "0.12.12"
 serde = { version = "1", features = ["derive"] }
+thiserror = "2"
