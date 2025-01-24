@@ -19,11 +19,31 @@ pub struct Inventory {
     pub scissors: u32,
 }
 
-#[derive(Debug, Default, Clone, Reflect, Deref, DerefMut)]
-pub struct Guaranty(pub Inventory);
+#[derive(Debug, Default, Clone, Reflect)]
+pub struct Stake {
+    pub star: u32,
+    pub coin: u32,
+    pub rock: u32,
+    pub paper: u32,
+    pub scissors: u32,
+}
+
+impl std::ops::Add<Stake> for Stake {
+    type Output = Self;
+
+    fn add(self, rhs: Stake) -> Self::Output {
+        Stake {
+            star: self.star + rhs.star,
+            coin: self.coin + rhs.coin,
+            rock: self.rock + rhs.rock,
+            paper: self.paper + rhs.paper,
+            scissors: self.scissors + rhs.scissors,
+        }
+    }
+}
 
 #[derive(Debug, Error)]
-pub enum GuarantyError {
+pub enum StakeError {
     #[error("you cannot take out {1} star(s) because you only have {0} star(s)")]
     Star(u32, u32),
     #[error("you cannot take out {1} coin(s) because you only have {0} coin(s)")]
@@ -37,30 +57,41 @@ pub enum GuarantyError {
 }
 
 impl Inventory {
-    pub fn check(&self, guaranty: &Guaranty) -> Result<(), GuarantyError> {
-        match (self, guaranty) {
-            (x, y) if x.star < y.star => Err(GuarantyError::Star(x.star, y.star)),
-            (x, y) if x.coin < y.coin => Err(GuarantyError::Coin(x.star, y.star)),
-            (x, y) if x.rock < y.rock => Err(GuarantyError::Rock(x.star, y.star)),
-            (x, y) if x.paper < y.paper => Err(GuarantyError::Paper(x.star, y.star)),
-            (x, y) if x.scissors < y.scissors => Err(GuarantyError::Scissors(x.star, y.star)),
-            _ => Ok(()),
+    pub fn take(&self, stake: &Stake) -> Result<Self, StakeError> {
+        match (self, stake) {
+            (x, y) if x.star < y.star => Err(StakeError::Star(x.star, y.star)),
+            (x, y) if x.coin < y.coin => Err(StakeError::Coin(x.star, y.star)),
+            (x, y) if x.rock < y.rock => Err(StakeError::Rock(x.star, y.star)),
+            (x, y) if x.paper < y.paper => Err(StakeError::Paper(x.star, y.star)),
+            (x, y) if x.scissors < y.scissors => Err(StakeError::Scissors(x.star, y.star)),
+            (x, y) => Ok(Self {
+                star: x.star - y.star,
+                coin: x.coin - y.coin,
+                rock: x.rock - y.rock,
+                paper: x.paper - y.paper,
+                scissors: x.scissors - y.scissors,
+            }),
         }
     }
 
-    pub fn receive(&mut self, guaranty: Guaranty) {
-        self.star += guaranty.star;
-        self.coin += guaranty.coin;
-        self.rock += guaranty.rock;
-        self.paper += guaranty.paper;
-        self.scissors += guaranty.scissors;
+    pub fn receive(&self, stake: Stake) -> Self {
+        Self {
+            star: self.star + stake.star,
+            coin: self.coin + stake.coin,
+            rock: self.rock + stake.rock,
+            paper: self.paper + stake.paper,
+            scissors: self.scissors + stake.scissors,
+        }
     }
 }
 
 #[derive(Debug, Default, Clone, Component, Reflect)]
 #[reflect(Component)]
-pub struct Table {
-    pub players: Option<[(Entity, Guaranty); 2]>,
+pub enum Table {
+    #[default]
+    Empty,
+    Negotiating([Entity; 2]),
+    Ready([(Entity, Stake); 2]),
 }
 
 fn main() {
