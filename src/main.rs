@@ -2,6 +2,8 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub const NUM_TABLES: usize = 32;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Card {
     Rock,
@@ -19,7 +21,8 @@ pub struct Inventory {
     pub scissors: u32,
 }
 
-#[derive(Debug, Default, Clone, Reflect)]
+#[derive(Debug, Default, Clone, Reflect, Serialize, Deserialize)]
+#[reflect(Default)]
 pub struct Stake {
     pub star: u32,
     pub coin: u32,
@@ -90,10 +93,21 @@ impl Inventory {
 pub enum Table {
     #[default]
     Empty,
-    Negotiating([Entity; 2]),
+    Occupied([Entity; 2]),
     Ready([(Entity, Stake); 2]),
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Component, Reflect)]
+#[reflect(Component)]
+pub struct TableId(pub usize);
+
+pub fn setup_tables(mut commands: Commands) {
+    commands.spawn_batch((0..NUM_TABLES).map(|index| (TableId(index), Table::default())));
+}
+
 fn main() {
-    App::new().add_plugins(DefaultPlugins).run();
+    App::new()
+        .add_plugins(DefaultPlugins)
+        .add_systems(Startup, setup_tables)
+        .run();
 }
