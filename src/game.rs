@@ -3,13 +3,20 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const NUM_TABLES: usize = 32;
+pub const NUM_PLAYERS: usize = 64;
+
+const NAMES: &str = include_str!("names.txt");
 
 #[derive(Debug, Default)]
 pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_tables);
+        app.register_type::<Inventory>()
+            .register_type::<Player>()
+            .register_type::<Table>()
+            .register_type::<Id>()
+            .add_systems(Startup, setup_scene);
     }
 }
 
@@ -114,6 +121,13 @@ pub enum Table {
 #[reflect(Component)]
 pub struct Id(pub usize);
 
-fn setup_tables(mut commands: Commands) {
-    commands.spawn_batch((0..NUM_TABLES).map(|index| (Id(index), Table::default())));
+fn setup_scene(mut commands: Commands) {
+    commands.spawn_batch(
+        (0..NUM_TABLES).map(|index| (Id(index), Name::new("Table"), Table::default())),
+    );
+
+    let names: Vec<_> = NAMES.split("\n").collect();
+    commands.spawn_batch(
+        (0..NUM_PLAYERS).map(move |index| (Id(index), Name::new(names[index]), Player)),
+    );
 }
