@@ -1,8 +1,9 @@
 use bevy::prelude::*;
+use derivative::Derivative;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub const NUM_TABLES: usize = 32;
 pub const NUM_PLAYERS: usize = 64;
 
 const NAMES: &str = include_str!("names.txt");
@@ -15,8 +16,8 @@ impl Plugin for GamePlugin {
         app.register_type::<Inventory>()
             .register_type::<Player>()
             .register_type::<Table>()
-            .register_type::<Id>()
-            .add_systems(Startup, setup_scene);
+            .add_systems(Startup, setup_scene)
+            .add_systems(Update, match_players);
     }
 }
 
@@ -27,19 +28,27 @@ pub enum Card {
     Scissors,
 }
 
-#[derive(Debug, Default, Clone, Component, Reflect)]
+#[derive(Debug, Derivative, Clone, Component, Reflect)]
+#[derivative(Default)]
 #[reflect(Component)]
 pub struct Inventory {
+    #[derivative(Default(value = "3"))]
     pub star: u32,
+    #[derivative(Default(value = "1000"))]
     pub coin: u32,
+    #[derivative(Default(value = "3"))]
     pub rock: u32,
+    #[derivative(Default(value = "3"))]
     pub paper: u32,
+    #[derivative(Default(value = "3"))]
     pub scissors: u32,
 }
 
-#[derive(Debug, Default, Clone, Reflect, Serialize, Deserialize)]
+#[derive(Debug, Derivative, Clone, Reflect, Serialize, Deserialize)]
+#[derivative(Default)]
 #[reflect(Default)]
 pub struct Stake {
+    #[derivative(Default(value = "1"))]
     pub star: u32,
     pub coin: u32,
     pub rock: u32,
@@ -108,26 +117,52 @@ impl Inventory {
 #[reflect(Component)]
 pub struct Player;
 
-#[derive(Debug, Default, Clone, Component, Reflect)]
+#[derive(Debug, Clone, Component, Reflect)]
 #[reflect(Component)]
-pub enum Table {
-    #[default]
-    Empty,
-    Occupied([Entity; 2]),
-    Ready([(Entity, Stake); 2]),
+pub struct Table {
+    pub state: [(Entity, Stake); 2],
+    pub turn: usize,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deref, DerefMut, Component, Reflect)]
-#[reflect(Component)]
-pub struct Id(pub usize);
+impl Table {
+    pub fn new(x: Entity, y: Entity) -> Self {
+        Self {
+            state: [(x, Stake::default()), (y, Stake::default())],
+            turn: 0,
+        }
+    }
+}
 
 fn setup_scene(mut commands: Commands) {
+    let names = NAMES.split("\n").collect_vec();
     commands.spawn_batch(
-        (0..NUM_TABLES).map(|index| (Id(index), Name::new("Table"), Table::default())),
+        (0..NUM_PLAYERS).map(move |index| (Name::new(names[index]), Player, Inventory::default())),
     );
+}
 
-    let names: Vec<_> = NAMES.split("\n").collect();
-    commands.spawn_batch(
-        (0..NUM_PLAYERS).map(move |index| (Id(index), Name::new(names[index]), Player)),
-    );
+fn match_players(
+    mut commands: Commands,
+    mut players: Query<(Entity, &Name, &mut Inventory), With<Player>>,
+    tables: Query<&Table, Without<Player>>,
+) {
+    // find players that are not currently in match
+    let players = players.iter_mut().filter(|(entity, _, _)| {
+        !tables
+            .iter()
+            .map(|table| table.state.clone().map(|x| x.0))
+            .collect_vec()
+            .concat()
+            .contains(entity)
+    });
+    for (mut x, mut y) in players.tuples() {
+        let table = Table::new(x.0, y.0);
+
+        let (Ok(m), Ok(n)) = (x.2.take(&table.state[0].1), y.2.take(&table.state[1].1)) else {
+            continue;
+        };
+        *x.2 = m;
+        *y.2 = n;
+
+        commands.spawn((table, Name::new(format!("Table ({}, {})", x.1, y.1))));
+    }
 }
