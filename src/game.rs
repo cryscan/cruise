@@ -1,4 +1,11 @@
-use bevy::prelude::*;
+use std::time::Duration;
+
+use anyhow::Result;
+use async_std::task::block_on;
+use bevy::{
+    prelude::*,
+    tasks::{futures_lite::future, IoTaskPool, Task},
+};
 use derivative::Derivative;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -17,7 +24,7 @@ impl Plugin for GamePlugin {
             .register_type::<Player>()
             .register_type::<Table>()
             .add_systems(Startup, setup_scene)
-            .add_systems(Update, match_players);
+            .add_systems(Update, (match_players, start_duel, end_duel));
     }
 }
 
@@ -117,39 +124,33 @@ impl Inventory {
 #[reflect(Component)]
 pub struct Player;
 
-#[derive(Debug, Clone, Component, Reflect)]
+#[derive(Debug, Clone, Deref, DerefMut, Component, Reflect)]
 #[reflect(Component)]
-pub struct Table {
-    pub state: [(Entity, Stake); 2],
-    pub turn: usize,
-}
+pub struct Table(pub [(Entity, Stake); 2]);
 
 impl Table {
     pub fn new(x: Entity, y: Entity) -> Self {
-        Self {
-            state: [(x, Stake::default()), (y, Stake::default())],
-            turn: 0,
-        }
+        Self([(x, Stake::default()), (y, Stake::default())])
     }
 }
 
 fn setup_scene(mut commands: Commands) {
-    let names = NAMES.split("\n").collect_vec();
+    let names = NAMES.split("\n").map(|x| x.trim()).collect_vec();
     commands.spawn_batch(
         (0..NUM_PLAYERS).map(move |index| (Name::new(names[index]), Player, Inventory::default())),
     );
 }
 
+/// Find players that are not currently in match, and put them onto a table.
 fn match_players(
     mut commands: Commands,
     mut players: Query<(Entity, &Name, &mut Inventory), With<Player>>,
     tables: Query<&Table, Without<Player>>,
 ) {
-    // find players that are not currently in match
     let players = players.iter_mut().filter(|(entity, _, _)| {
         !tables
             .iter()
-            .map(|table| table.state.clone().map(|x| x.0))
+            .map(|table| table.0.clone().map(|x| x.0))
             .collect_vec()
             .concat()
             .contains(entity)
@@ -157,12 +158,68 @@ fn match_players(
     for (mut x, mut y) in players.tuples() {
         let table = Table::new(x.0, y.0);
 
-        let (Ok(m), Ok(n)) = (x.2.take(&table.state[0].1), y.2.take(&table.state[1].1)) else {
+        let (Ok(m), Ok(n)) = (x.2.take(&table[0].1), y.2.take(&table[1].1)) else {
             continue;
         };
         *x.2 = m;
         *y.2 = n;
 
         commands.spawn((table, Name::new(format!("Table ({}, {})", x.1, y.1))));
+    }
+}
+
+#[derive(Debug, Component)]
+struct DuelTask(Task<Result<[Inventory; 2]>>);
+
+async fn duel(_table: Table, players: [(Name, Inventory); 2]) -> Result<[Inventory; 2]> {
+    async_std::task::sleep(Duration::from_secs_f32(fastrand::f32() * 10.0)).await;
+
+    let [(n0, x0), (n1, x1)] = players;
+
+    let info = format!("{n0}, {n1}");
+    bevy::log::info!("{info}");
+    Ok([x0, x1])
+}
+
+fn start_duel(
+    mut commands: Commands,
+    players: Query<(Entity, &Name, &Inventory), With<Player>>,
+    tables: Query<(Entity, &Table), Without<DuelTask>>,
+) {
+    let thread_pool = IoTaskPool::get();
+    for (entity, table) in &tables {
+        let (Ok(x), Ok(y)) = (players.get(table[0].0), players.get(table[1].0)) else {
+            continue;
+        };
+        let table = table.clone();
+        let players = [(x.1.clone(), x.2.clone()), (y.1.clone(), y.2.clone())];
+        let task = thread_pool.spawn(duel(table, players));
+        commands.entity(entity).insert(DuelTask(task));
+    }
+}
+
+fn end_duel(
+    mut commands: Commands,
+    mut players: Query<&mut Inventory, With<Player>>,
+    mut tables: Query<(Entity, &Table, &mut DuelTask), Without<Player>>,
+) {
+    for (entity, table, mut task) in &mut tables {
+        if let Some(result) = block_on(future::poll_once(&mut task.0)) {
+            match result {
+                Ok([m, n]) => {
+                    let Ok(mut x) = players.get_mut(table[0].0) else {
+                        continue;
+                    };
+                    *x = m;
+
+                    let Ok(mut y) = players.get_mut(table[1].0) else {
+                        continue;
+                    };
+                    *y = n;
+                }
+                Err(err) => bevy::log::warn!("duel error: {err}"),
+            }
+            commands.entity(entity).despawn_recursive();
+        }
     }
 }
