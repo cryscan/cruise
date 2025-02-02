@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{ops::Not, time::Duration};
 
 use anyhow::Result;
 use async_std::task::block_on;
@@ -52,11 +52,9 @@ pub struct Inventory {
     pub scissors: u32,
 }
 
-#[derive(Debug, Derivative, Clone, Reflect, Serialize, Deserialize)]
-#[derivative(Default)]
+#[derive(Debug, Default, Clone, Reflect, Serialize, Deserialize)]
 #[reflect(Default)]
-pub struct Stake {
-    #[derivative(Default(value = "1"))]
+pub struct Trade {
     pub star: u32,
     pub coin: u32,
     pub rock: u32,
@@ -64,42 +62,80 @@ pub struct Stake {
     pub scissors: u32,
 }
 
-impl std::ops::Add<Stake> for Stake {
-    type Output = Self;
+#[derive(Debug, Error)]
+pub enum TradeError {
+    #[error("cannot take out {1} star(s) since you only have {0}")]
+    Star(u32, u32),
+    #[error("cannot take out {1} coin(s) since you only have {0}")]
+    Coin(u32, u32),
+    #[error("cannot take out {1} rock card(s) since you only have {0}")]
+    Rock(u32, u32),
+    #[error("cannot take out {1} paper card(s) since you only have {0}")]
+    Paper(u32, u32),
+    #[error("cannot take out {1} scissors card(s) since you only have {0}")]
+    Scissors(u32, u32),
+}
 
-    fn add(self, rhs: Stake) -> Self::Output {
-        Stake {
-            star: self.star + rhs.star,
-            coin: self.coin + rhs.coin,
-            rock: self.rock + rhs.rock,
-            paper: self.paper + rhs.paper,
-            scissors: self.scissors + rhs.scissors,
-        }
-    }
+#[derive(Debug, Derivative, Clone, Reflect, Serialize, Deserialize)]
+#[derivative(Default)]
+#[reflect(Default)]
+pub struct Stake {
+    #[derivative(Default(value = "1"))]
+    pub star: u32,
+    pub coin: u32,
 }
 
 #[derive(Debug, Error)]
 pub enum StakeError {
-    #[error("you cannot take out {1} star(s) because you only have {0} star(s)")]
+    #[error("cannot take out {1} star(s) since you only have {0} star(s)")]
     Star(u32, u32),
-    #[error("you cannot take out {1} coin(s) because you only have {0} coin(s)")]
+    #[error("cannot take out {1} coin(s) since you only have {0} coin(s)")]
     Coin(u32, u32),
-    #[error("you cannot take out {1} rock card(s) because you only have {0} rock card(s)")]
-    Rock(u32, u32),
-    #[error("you cannot take out {1} paper card(s) because you only have {0} paper card(s)")]
-    Paper(u32, u32),
-    #[error("you cannot take out {1} scissors card(s) because you only have {0} scissors card(s)")]
-    Scissors(u32, u32),
+}
+
+impl std::ops::Add<Stake> for Stake {
+    type Output = Self;
+
+    fn add(self, rhs: Stake) -> Self::Output {
+        Self::Output {
+            star: self.star + rhs.star,
+            coin: self.coin + rhs.coin,
+        }
+    }
 }
 
 impl Inventory {
-    pub fn take(&self, stake: &Stake) -> Result<Self, StakeError> {
+    pub fn is_alive(&self) -> bool {
+        self.star > 0
+    }
+
+    pub fn split_stake(&self, stake: &Stake) -> Result<Self, StakeError> {
         match (self, stake) {
             (x, y) if x.star < y.star => Err(StakeError::Star(x.star, y.star)),
-            (x, y) if x.coin < y.coin => Err(StakeError::Coin(x.star, y.star)),
-            (x, y) if x.rock < y.rock => Err(StakeError::Rock(x.star, y.star)),
-            (x, y) if x.paper < y.paper => Err(StakeError::Paper(x.star, y.star)),
-            (x, y) if x.scissors < y.scissors => Err(StakeError::Scissors(x.star, y.star)),
+            (x, y) if x.coin < y.coin => Err(StakeError::Coin(x.coin, y.coin)),
+            (x, y) => Ok(Self {
+                star: x.star - y.star,
+                coin: x.coin - y.coin,
+                ..x.clone()
+            }),
+        }
+    }
+
+    pub fn apply_stake(&self, stake: &Stake) -> Self {
+        Self {
+            star: self.star + stake.star,
+            coin: self.coin + stake.coin,
+            ..self.clone()
+        }
+    }
+
+    pub fn split_trade(&self, trade: &Trade) -> Result<Self, TradeError> {
+        match (self, trade) {
+            (x, y) if x.star < y.star => Err(TradeError::Star(x.star, y.star)),
+            (x, y) if x.coin < y.coin => Err(TradeError::Coin(x.coin, y.coin)),
+            (x, y) if x.rock < y.rock => Err(TradeError::Rock(x.rock, y.rock)),
+            (x, y) if x.paper < y.paper => Err(TradeError::Paper(x.paper, y.paper)),
+            (x, y) if x.scissors < y.scissors => Err(TradeError::Scissors(x.scissors, y.scissors)),
             (x, y) => Ok(Self {
                 star: x.star - y.star,
                 coin: x.coin - y.coin,
@@ -110,13 +146,13 @@ impl Inventory {
         }
     }
 
-    pub fn receive(&self, stake: Stake) -> Self {
+    pub fn apply_trade(&self, trade: &Trade) -> Self {
         Self {
-            star: self.star + stake.star,
-            coin: self.coin + stake.coin,
-            rock: self.rock + stake.rock,
-            paper: self.paper + stake.paper,
-            scissors: self.scissors + stake.scissors,
+            star: self.star + trade.star,
+            coin: self.coin + trade.coin,
+            rock: self.rock + trade.rock,
+            paper: self.paper + trade.paper,
+            scissors: self.scissors + trade.scissors,
         }
     }
 }
@@ -127,11 +163,11 @@ pub struct Player;
 
 #[derive(Debug, Clone, Deref, DerefMut, Component, Reflect)]
 #[reflect(Component)]
-pub struct Table(pub [(Entity, Stake); 2]);
+pub struct Table(pub [Entity; 2]);
 
 impl Table {
     pub fn new(x: Entity, y: Entity) -> Self {
-        Self([(x, Stake::default()), (y, Stake::default())])
+        Self([x, y])
     }
 }
 
@@ -145,19 +181,21 @@ fn setup_scene(mut commands: Commands) {
 /// Find players that are not currently in match, and put them onto a table.
 fn match_players(
     mut commands: Commands,
-    mut players: Query<(Entity, &Name, &mut Inventory), With<Player>>,
+    mut players: Query<(Entity, &Name, &Inventory), With<Player>>,
     tables: Query<&Table, Without<Player>>,
 ) {
     let mut players = players
         .iter_mut()
         .filter(|(entity, _, _)| {
-            !tables
+            tables
                 .iter()
-                .map(|table| table.0.clone().map(|x| x.0))
+                .map(|table| table.0)
                 .collect_vec()
                 .concat()
                 .contains(entity)
+                .not()
         })
+        .filter(|(_, _, inventory)| inventory.is_alive())
         .collect_vec();
 
     if players.len() < MIN_MATCH_PLAYERS {
@@ -166,16 +204,10 @@ fn match_players(
 
     fastrand::shuffle(&mut players);
 
-    for (mut x, mut y) in players.into_iter().tuples() {
+    for (x, y) in players.into_iter().tuples() {
         let table = Table::new(x.0, y.0);
-
-        let (Ok(m), Ok(n)) = (x.2.take(&table[0].1), y.2.take(&table[1].1)) else {
-            continue;
-        };
-        *x.2 = m;
-        *y.2 = n;
-
-        commands.spawn((table, Name::new(format!("Table ({}, {})", x.1, y.1))));
+        let name = Name::new(format!("Table ({}, {})", x.1, y.1));
+        commands.spawn((table, name));
     }
 }
 
@@ -198,7 +230,7 @@ fn start_duel(
 ) {
     let thread_pool = IoTaskPool::get();
     for (entity, table) in &tables {
-        let (Ok(x), Ok(y)) = (players.get(table[0].0), players.get(table[1].0)) else {
+        let (Ok(x), Ok(y)) = (players.get(table[0]), players.get(table[1])) else {
             continue;
         };
         let table = table.clone();
@@ -217,15 +249,12 @@ fn end_duel(
         if let Some(result) = block_on(future::poll_once(&mut task.0)) {
             match result {
                 Ok([m, n]) => {
-                    let Ok(mut x) = players.get_mut(table[0].0) else {
-                        continue;
-                    };
-                    *x = m;
-
-                    let Ok(mut y) = players.get_mut(table[1].0) else {
-                        continue;
-                    };
-                    *y = n;
+                    if let Ok(mut x) = players.get_mut(table[0]) {
+                        *x = m;
+                    }
+                    if let Ok(mut y) = players.get_mut(table[1]) {
+                        *y = n;
+                    }
                 }
                 Err(err) => bevy::log::warn!("duel error: {err}"),
             }
