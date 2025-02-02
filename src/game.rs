@@ -1,4 +1,8 @@
-use std::{ops::Not, time::Duration};
+use std::{
+    fmt::Display,
+    ops::{Add, Not},
+    time::Duration,
+};
 
 use anyhow::Result;
 use async_std::task::block_on;
@@ -93,7 +97,7 @@ pub enum StakeError {
     Coin(u32, u32),
 }
 
-impl std::ops::Add<Stake> for Stake {
+impl Add<Stake> for Stake {
     type Output = Self;
 
     fn add(self, rhs: Stake) -> Self::Output {
@@ -107,6 +111,14 @@ impl std::ops::Add<Stake> for Stake {
 impl Inventory {
     pub fn is_alive(&self) -> bool {
         self.star > 0
+    }
+
+    pub fn num_cards(&self) -> u32 {
+        self.rock + self.paper + self.scissors
+    }
+
+    pub fn can_duel(&self) -> bool {
+        self.num_cards() > 0
     }
 
     pub fn split_stake(&self, stake: &Stake) -> Result<Self, StakeError> {
@@ -214,15 +226,6 @@ fn match_players(
 #[derive(Debug, Component)]
 struct DuelTask(Task<Result<[Inventory; 2]>>);
 
-async fn duel(_table: Table, players: [(Name, Inventory); 2]) -> Result<[Inventory; 2]> {
-    async_std::task::sleep(Duration::from_secs_f32(fastrand::f32() * 10.0)).await;
-
-    let [(n0, x0), (n1, x1)] = players;
-
-    bevy::log::info!("{n0}, {n1}");
-    Ok([x0, x1])
-}
-
 fn start_duel(
     mut commands: Commands,
     players: Query<(Entity, &Name, &Inventory), With<Player>>,
@@ -233,9 +236,11 @@ fn start_duel(
         let (Ok(x), Ok(y)) = (players.get(table[0]), players.get(table[1])) else {
             continue;
         };
-        let table = table.clone();
+        assert!(x.2.is_alive());
+        assert!(y.2.is_alive());
+
         let players = [(x.1.clone(), x.2.clone()), (y.1.clone(), y.2.clone())];
-        let task = thread_pool.spawn(duel(table, players));
+        let task = thread_pool.spawn(duel(players));
         commands.entity(entity).insert(DuelTask(task));
     }
 }
@@ -261,4 +266,80 @@ fn end_duel(
             commands.entity(entity).despawn_recursive();
         }
     }
+}
+
+#[derive(Debug, Clone, Reflect)]
+pub enum Role {
+    System,
+    Actor(String),
+    Inner(String),
+}
+
+impl Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Role::System => write!(f, "System"),
+            Role::Actor(name) => writeln!(f, "{name}"),
+            Role::Inner(name) => writeln!(f, "{name} (Thinks)"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Reflect)]
+pub struct ChatRecord {
+    pub role: Role,
+    pub content: String,
+}
+
+#[derive(Debug, Default, Clone, Reflect)]
+pub struct GameState {
+    pub rock: u32,
+    pub paper: u32,
+    pub scissors: u32,
+}
+
+#[derive(Debug, Clone, Copy, Reflect)]
+pub struct TradeState<'a> {
+    pub mine: &'a Trade,
+    pub others: &'a Trade,
+}
+
+#[derive(Debug, Clone, Copy, Reflect)]
+pub struct StakeState<'a> {
+    pub mine: &'a Stake,
+    pub others: &'a Stake,
+}
+
+pub trait Actor {
+    /// Notify the actor about how many cards are there on the stage.
+    fn notify(&mut self, state: &GameState);
+    /// Chat with the actor.
+    fn chat(&mut self, inventory: &Inventory, history: &[ChatRecord]) -> ChatRecord;
+    /// Trade with another actor.
+    fn trade(&mut self, inventory: &Inventory, history: &[ChatRecord]) -> Trade;
+    /// If accepting the trade.
+    fn accept_trade(
+        &mut self,
+        inventory: &Inventory,
+        history: &[ChatRecord],
+        state: TradeState<'_>,
+    ) -> bool;
+    /// Raise the stake of the duel.
+    fn raise_stake(&mut self, inventory: &Inventory, history: &[ChatRecord]) -> Stake;
+    /// If accepting the duel.
+    fn accept_duel(
+        &mut self,
+        inventory: &Inventory,
+        history: &[ChatRecord],
+        state: StakeState<'_>,
+    ) -> bool;
+}
+
+pub async fn duel(players: [(Name, Inventory); 2]) -> Result<[Inventory; 2]> {
+    async_std::task::sleep(Duration::from_secs_f32(fastrand::f32() * 10.0)).await;
+
+    let [(n0, x0), (n1, x1)] = players;
+
+    bevy::log::info!("{n0}, {n1}");
+    Ok([x0, x1])
 }
