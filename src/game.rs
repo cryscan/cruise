@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const NUM_PLAYERS: usize = 64;
+pub const MIN_MATCH_PLAYERS: usize = 8;
 
 const NAMES: &str = include_str!("names.txt");
 
@@ -147,15 +148,25 @@ fn match_players(
     mut players: Query<(Entity, &Name, &mut Inventory), With<Player>>,
     tables: Query<&Table, Without<Player>>,
 ) {
-    let players = players.iter_mut().filter(|(entity, _, _)| {
-        !tables
-            .iter()
-            .map(|table| table.0.clone().map(|x| x.0))
-            .collect_vec()
-            .concat()
-            .contains(entity)
-    });
-    for (mut x, mut y) in players.tuples() {
+    let mut players = players
+        .iter_mut()
+        .filter(|(entity, _, _)| {
+            !tables
+                .iter()
+                .map(|table| table.0.clone().map(|x| x.0))
+                .collect_vec()
+                .concat()
+                .contains(entity)
+        })
+        .collect_vec();
+
+    if players.len() < MIN_MATCH_PLAYERS {
+        return;
+    }
+
+    fastrand::shuffle(&mut players);
+
+    for (mut x, mut y) in players.into_iter().tuples() {
         let table = Table::new(x.0, y.0);
 
         let (Ok(m), Ok(n)) = (x.2.take(&table[0].1), y.2.take(&table[1].1)) else {
@@ -176,8 +187,7 @@ async fn duel(_table: Table, players: [(Name, Inventory); 2]) -> Result<[Invento
 
     let [(n0, x0), (n1, x1)] = players;
 
-    let info = format!("{n0}, {n1}");
-    bevy::log::info!("{info}");
+    bevy::log::info!("{n0}, {n1}");
     Ok([x0, x1])
 }
 
