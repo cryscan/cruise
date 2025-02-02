@@ -1,22 +1,26 @@
 use std::{
     fmt::Display,
     ops::{Add, Not},
-    time::Duration,
+    sync::Arc,
 };
 
-use anyhow::Result;
-use async_std::task::block_on;
+use anyhow::{bail, Result};
+use async_std::{sync::Mutex, task::block_on};
 use bevy::{
     prelude::*,
     tasks::{futures_lite::future, IoTaskPool, Task},
+    utils::{BoxedFuture, ConditionalSend},
 };
 use derivative::Derivative;
+use futures::join;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const NUM_PLAYERS: usize = 64;
 pub const MIN_MATCH_PLAYERS: usize = 8;
+pub const NUM_CHAT_ROUNDS: usize = 4;
+pub const MAX_TRAIL_ROUNDS: usize = 3;
 
 const NAMES: &str = include_str!("names.txt");
 
@@ -26,10 +30,14 @@ pub struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<Inventory>()
-            .register_type::<Player>()
             .register_type::<Table>()
+            .register_type::<PublicState>()
+            .init_resource::<PublicState>()
             .add_systems(Startup, setup_scene)
-            .add_systems(Update, (match_players, start_duel, end_duel));
+            .add_systems(
+                Update,
+                (update_public_state, match_players, start_duel, poll_duel),
+            );
     }
 }
 
@@ -66,7 +74,7 @@ pub struct Trade {
     pub scissors: u32,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Copy, Error)]
 pub enum TradeError {
     #[error("cannot take out {1} star(s) since you only have {0}")]
     Star(u32, u32),
@@ -89,14 +97,6 @@ pub struct Stake {
     pub coin: u32,
 }
 
-#[derive(Debug, Error)]
-pub enum StakeError {
-    #[error("cannot take out {1} star(s) since you only have {0} star(s)")]
-    Star(u32, u32),
-    #[error("cannot take out {1} coin(s) since you only have {0} coin(s)")]
-    Coin(u32, u32),
-}
-
 impl Add<Stake> for Stake {
     type Output = Self;
 
@@ -106,6 +106,24 @@ impl Add<Stake> for Stake {
             coin: self.coin + rhs.coin,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Error)]
+pub enum StakeError {
+    #[error("cannot take out {1} star(s) since you only have {0} star(s)")]
+    Star(u32, u32),
+    #[error("cannot take out {1} coin(s) since you only have {0} coin(s)")]
+    Coin(u32, u32),
+}
+
+#[derive(Debug, Clone, Copy, Error)]
+pub enum DuelError {
+    #[error("cannot draw rock since you do not have such card")]
+    Rock,
+    #[error("cannot draw paper since you do not have such card")]
+    Paper,
+    #[error("cannot draw scissors since you do not have such card")]
+    Scissors,
 }
 
 impl Inventory {
@@ -119,26 +137,6 @@ impl Inventory {
 
     pub fn can_duel(&self) -> bool {
         self.num_cards() > 0
-    }
-
-    pub fn split_stake(&self, stake: &Stake) -> Result<Self, StakeError> {
-        match (self, stake) {
-            (x, y) if x.star < y.star => Err(StakeError::Star(x.star, y.star)),
-            (x, y) if x.coin < y.coin => Err(StakeError::Coin(x.coin, y.coin)),
-            (x, y) => Ok(Self {
-                star: x.star - y.star,
-                coin: x.coin - y.coin,
-                ..x.clone()
-            }),
-        }
-    }
-
-    pub fn apply_stake(&self, stake: &Stake) -> Self {
-        Self {
-            star: self.star + stake.star,
-            coin: self.coin + stake.coin,
-            ..self.clone()
-        }
     }
 
     pub fn split_trade(&self, trade: &Trade) -> Result<Self, TradeError> {
@@ -167,11 +165,61 @@ impl Inventory {
             scissors: self.scissors + trade.scissors,
         }
     }
+
+    pub fn split_stake(&self, stake: &Stake) -> Result<Self, StakeError> {
+        match (self, stake) {
+            (x, y) if x.star < y.star => Err(StakeError::Star(x.star, y.star)),
+            (x, y) if x.coin < y.coin => Err(StakeError::Coin(x.coin, y.coin)),
+            (x, y) => Ok(Self {
+                star: x.star - y.star,
+                coin: x.coin - y.coin,
+                ..x.clone()
+            }),
+        }
+    }
+
+    pub fn apply_stake(&self, stake: &Stake) -> Self {
+        Self {
+            star: self.star + stake.star,
+            coin: self.coin + stake.coin,
+            ..self.clone()
+        }
+    }
+
+    pub fn split_duel(&self, card: Card) -> Result<Self, DuelError> {
+        match (self, card) {
+            (x, Card::Rock) if x.rock == 0 => Err(DuelError::Rock),
+            (x, Card::Paper) if x.paper == 0 => Err(DuelError::Paper),
+            (x, Card::Scissors) if x.scissors == 0 => Err(DuelError::Scissors),
+            (x, Card::Rock) => Ok(Self {
+                rock: x.rock - 1,
+                ..x.clone()
+            }),
+            (x, Card::Paper) => Ok(Self {
+                paper: x.paper - 1,
+                ..x.clone()
+            }),
+            (x, Card::Scissors) => Ok(Self {
+                scissors: x.scissors - 1,
+                ..x.clone()
+            }),
+        }
+    }
 }
 
-#[derive(Debug, Default, Clone, Copy, Component, Reflect)]
-#[reflect(Component)]
-pub struct Player;
+#[derive(Derivative, Component)]
+#[derivative(Debug)]
+pub struct Player {
+    #[derivative(Debug = "ignore")]
+    pub actor: Arc<Mutex<dyn Actor>>,
+}
+
+impl Player {
+    pub fn new(actor: impl Actor) -> Self {
+        let actor = Arc::new(Mutex::new(actor));
+        Self { actor }
+    }
+}
 
 #[derive(Debug, Clone, Deref, DerefMut, Component, Reflect)]
 #[reflect(Component)]
@@ -183,11 +231,33 @@ impl Table {
     }
 }
 
+#[derive(Debug, Default, Clone, Resource, Reflect)]
+#[reflect(Resource)]
+pub struct PublicState {
+    pub rock: u32,
+    pub paper: u32,
+    pub scissors: u32,
+}
+
 fn setup_scene(mut commands: Commands) {
     let names = NAMES.split("\n").map(|x| x.trim()).collect_vec();
-    commands.spawn_batch(
-        (0..NUM_PLAYERS).map(move |index| (Name::new(names[index]), Player, Inventory::default())),
-    );
+    commands.spawn_batch((0..NUM_PLAYERS).map(move |index| {
+        (
+            Name::new(names[index]),
+            Player::new(DummyActor),
+            Inventory::default(),
+        )
+    }));
+}
+
+fn update_public_state(mut state: ResMut<PublicState>, players: Query<&Inventory, With<Player>>) {
+    let mut x = PublicState::default();
+    for inventory in &players {
+        x.rock += inventory.rock;
+        x.paper += inventory.paper;
+        x.scissors += inventory.scissors;
+    }
+    *state = x;
 }
 
 /// Find players that are not currently in match, and put them onto a table.
@@ -228,7 +298,8 @@ struct DuelTask(Task<Result<[Inventory; 2]>>);
 
 fn start_duel(
     mut commands: Commands,
-    players: Query<(Entity, &Name, &Inventory), With<Player>>,
+    state: Res<PublicState>,
+    players: Query<(Entity, &Name, &Inventory, &Player)>,
     tables: Query<(Entity, &Table), Without<DuelTask>>,
 ) {
     let thread_pool = IoTaskPool::get();
@@ -239,13 +310,26 @@ fn start_duel(
         assert!(x.2.is_alive());
         assert!(y.2.is_alive());
 
-        let players = [(x.1.clone(), x.2.clone()), (y.1.clone(), y.2.clone())];
-        let task = thread_pool.spawn(duel(players));
+        let state = state.clone();
+        let actors = [x.3.actor.clone(), y.3.actor.clone()];
+        let data = [
+            PlayerData {
+                entity: x.0,
+                name: x.1.clone(),
+                inventory: x.2.clone(),
+            },
+            PlayerData {
+                entity: y.0,
+                name: y.1.clone(),
+                inventory: y.2.clone(),
+            },
+        ];
+        let task = thread_pool.spawn(duel(state, actors, data));
         commands.entity(entity).insert(DuelTask(task));
     }
 }
 
-fn end_duel(
+fn poll_duel(
     mut commands: Commands,
     mut players: Query<&mut Inventory, With<Player>>,
     mut tables: Query<(Entity, &Table, &mut DuelTask), Without<Player>>,
@@ -269,18 +353,25 @@ fn end_duel(
 }
 
 #[derive(Debug, Clone, Reflect)]
+pub struct PlayerData {
+    pub entity: Entity,
+    pub name: Name,
+    pub inventory: Inventory,
+}
+
+#[derive(Debug, Clone, Reflect)]
 pub enum Role {
-    System,
-    Actor(String),
-    Inner(String),
+    System(Entity),
+    Actor(Entity, Name),
+    Inner(Entity, Name),
 }
 
 impl Display for Role {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Role::System => write!(f, "System"),
-            Role::Actor(name) => writeln!(f, "{name}"),
-            Role::Inner(name) => writeln!(f, "{name} (Thinks)"),
+            Role::System(_) => write!(f, "System"),
+            Role::Actor(_, name) => writeln!(f, "{name}"),
+            Role::Inner(_, name) => writeln!(f, "{name} (Thinks)"),
         }
     }
 }
@@ -289,13 +380,6 @@ impl Display for Role {
 pub struct ChatRecord {
     pub role: Role,
     pub content: String,
-}
-
-#[derive(Debug, Default, Clone, Reflect)]
-pub struct GameState {
-    pub rock: u32,
-    pub paper: u32,
-    pub scissors: u32,
 }
 
 #[derive(Debug, Clone, Copy, Reflect)]
@@ -310,36 +394,209 @@ pub struct StakeState<'a> {
     pub others: &'a Stake,
 }
 
-pub trait Actor {
+pub trait Actor: ConditionalSend + Sync + 'static {
     /// Notify the actor about how many cards are there on the stage.
-    fn notify(&mut self, state: &GameState);
+    fn notify<'a>(&'a mut self, state: &'a PublicState) -> BoxedFuture<'a, ()>;
+    /// Provide feedback to the actor (due to erroneous actions).
+    fn feedback<'a>(&'a mut self, text: String) -> BoxedFuture<'a, ()>;
     /// Chat with the actor.
-    fn chat(&mut self, inventory: &Inventory, history: &[ChatRecord]) -> ChatRecord;
+    fn chat<'a>(
+        &'a mut self,
+        data: &'a PlayerData,
+        history: &'a [ChatRecord],
+        round: usize,
+    ) -> BoxedFuture<'a, Vec<ChatRecord>>;
     /// Trade with another actor.
-    fn trade(&mut self, inventory: &Inventory, history: &[ChatRecord]) -> Trade;
-    /// If accepting the trade.
-    fn accept_trade(
-        &mut self,
-        inventory: &Inventory,
-        history: &[ChatRecord],
-        state: TradeState<'_>,
-    ) -> bool;
+    fn trade<'a>(
+        &'a mut self,
+        data: &'a PlayerData,
+        history: &'a [ChatRecord],
+    ) -> BoxedFuture<'a, Trade>;
+    /// Accept the trade or not.
+    fn accept_trade<'a>(
+        &'a mut self,
+        data: &'a PlayerData,
+        history: &'a [ChatRecord],
+        state: TradeState<'a>,
+    ) -> BoxedFuture<'a, bool>;
     /// Raise the stake of the duel.
-    fn raise_stake(&mut self, inventory: &Inventory, history: &[ChatRecord]) -> Stake;
-    /// If accepting the duel.
-    fn accept_duel(
-        &mut self,
-        inventory: &Inventory,
-        history: &[ChatRecord],
-        state: StakeState<'_>,
-    ) -> bool;
+    fn raise_stake<'a>(
+        &'a mut self,
+        data: &'a PlayerData,
+        history: &'a [ChatRecord],
+    ) -> BoxedFuture<'a, Stake>;
+    /// Accept the duel or not. If accepts, draw a card from the inventory.
+    fn accept_duel<'a>(
+        &'a mut self,
+        data: &'a PlayerData,
+        history: &'a [ChatRecord],
+        state: StakeState<'a>,
+    ) -> BoxedFuture<'a, Option<Card>>;
 }
 
-pub async fn duel(players: [(Name, Inventory); 2]) -> Result<[Inventory; 2]> {
-    async_std::task::sleep(Duration::from_secs_f32(fastrand::f32() * 10.0)).await;
+#[derive(Debug, Default, Clone, Copy, Reflect)]
+#[reflect(Default)]
+pub struct DummyActor;
 
-    let [(n0, x0), (n1, x1)] = players;
+impl Actor for DummyActor {
+    fn notify<'a>(&'a mut self, _state: &'a PublicState) -> BoxedFuture<'a, ()> {
+        Box::pin(async move {})
+    }
 
-    bevy::log::info!("{n0}, {n1}");
-    Ok([x0, x1])
+    fn feedback<'a>(&'a mut self, _text: String) -> BoxedFuture<'a, ()> {
+        Box::pin(async move {})
+    }
+
+    fn chat<'a>(
+        &'a mut self,
+        _data: &'a PlayerData,
+        _history: &'a [ChatRecord],
+        _round: usize,
+    ) -> BoxedFuture<'a, Vec<ChatRecord>> {
+        Box::pin(async move { vec![] })
+    }
+
+    fn trade<'a>(
+        &'a mut self,
+        _data: &'a PlayerData,
+        _history: &'a [ChatRecord],
+    ) -> BoxedFuture<'a, Trade> {
+        Box::pin(async move { Default::default() })
+    }
+
+    fn accept_trade<'a>(
+        &'a mut self,
+        _data: &'a PlayerData,
+        _history: &'a [ChatRecord],
+        _state: TradeState<'a>,
+    ) -> BoxedFuture<'a, bool> {
+        Box::pin(async move { true })
+    }
+
+    fn raise_stake<'a>(
+        &'a mut self,
+        _data: &'a PlayerData,
+        _history: &'a [ChatRecord],
+    ) -> BoxedFuture<'a, Stake> {
+        Box::pin(async move { Default::default() })
+    }
+
+    fn accept_duel<'a>(
+        &'a mut self,
+        _data: &'a PlayerData,
+        _history: &'a [ChatRecord],
+        _state: StakeState<'a>,
+    ) -> BoxedFuture<'a, Option<Card>> {
+        Box::pin(async move {
+            match fastrand::u8(0..4) {
+                0 => Some(Card::Rock),
+                1 => Some(Card::Paper),
+                2 => Some(Card::Scissors),
+                _ => None,
+            }
+        })
+    }
+}
+
+pub async fn duel(
+    state: PublicState,
+    actors: [Arc<Mutex<dyn Actor>>; 2],
+    mut data: [PlayerData; 2],
+) -> Result<[Inventory; 2]> {
+    let mut actors = join!(actors[0].lock(), actors[1].lock());
+
+    // step 1: notify both players about public state
+    join!(actors.0.notify(&state), actors.1.notify(&state));
+
+    // step 2: players chat before trade
+    let mut history: Vec<ChatRecord> = vec![];
+
+    // remove opponent's private history
+    let observe = |history: &[ChatRecord], index: usize| {
+        history
+            .iter()
+            .filter(|x| match x.role.clone() {
+                Role::System(entity) | Role::Inner(entity, _) => entity == data[index].entity,
+                Role::Actor(_, _) => true,
+            })
+            .cloned()
+            .collect_vec()
+    };
+
+    for round in 0..NUM_CHAT_ROUNDS {
+        let observation = observe(&history, 0);
+        let mut records = actors.0.chat(&data[0], &observation, round).await;
+        history.append(&mut records);
+
+        let observation = observe(&history, 1);
+        let mut records = actors.1.chat(&data[1], &observation, round).await;
+        history.append(&mut records);
+    }
+
+    // step 3: players trade
+    let mut round = 0;
+    let trades = loop {
+        if round > MAX_TRAIL_ROUNDS {
+            bail!("trade failed too many times");
+        }
+        round += 1;
+
+        let trades = join!(
+            actors.0.trade(&data[0], &history),
+            actors.1.trade(&data[1], &history)
+        );
+        let x0 = match data[0].inventory.split_trade(&trades.0) {
+            Ok(inventory) => inventory,
+            Err(err) => {
+                actors.0.feedback(format!("Error: {err}")).await;
+                continue;
+            }
+        };
+        let x1 = match data[1].inventory.split_trade(&trades.1) {
+            Ok(inventory) => inventory,
+            Err(err) => {
+                actors.1.feedback(format!("Error: {err}")).await;
+                continue;
+            }
+        };
+
+        // success, update inventories
+        data[0].inventory = x0;
+        data[1].inventory = x1;
+        break trades;
+    };
+
+    // step 4: players agree on the trade
+    let agreements = join!(
+        actors.0.accept_trade(
+            &data[0],
+            &history,
+            TradeState {
+                mine: &trades.0,
+                others: &trades.1
+            }
+        ),
+        actors.1.accept_trade(
+            &data[1],
+            &history,
+            TradeState {
+                mine: &trades.1,
+                others: &trades.0
+            }
+        )
+    );
+    match agreements {
+        (true, true) => {
+            // players do reach an agreement, perform the trade
+            data[0].inventory.apply_trade(&trades.1);
+            data[1].inventory.apply_trade(&trades.0);
+        }
+        _ => {
+            // players do not reach an agreement, rewind
+            data[0].inventory.apply_trade(&trades.0);
+            data[1].inventory.apply_trade(&trades.1);
+        }
+    }
+
+    Ok(data.map(|x| x.inventory))
 }
