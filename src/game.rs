@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const NUM_PLAYERS: usize = 64;
-pub const MIN_MATCH_PLAYERS: usize = 8;
+pub const MIN_MATCH_PLAYERS: usize = 2;
 pub const NUM_CHAT_ROUNDS: usize = 4;
 pub const MAX_TRAIL_ROUNDS: usize = 3;
 
@@ -39,7 +39,7 @@ impl Plugin for GamePlugin {
                 (
                     update_public_state,
                     match_players,
-                    remove_dead_players,
+                    remove_players,
                     start_duel,
                     poll_duel,
                 ),
@@ -307,6 +307,17 @@ fn match_players(
     mut players: Query<(Entity, &Name, &Inventory), With<Player>>,
     tables: Query<&Table, Without<Player>>,
 ) {
+    let mut total_cards = 0;
+    for (_, _, inventory) in &players {
+        total_cards += inventory.rock;
+        total_cards += inventory.paper;
+        total_cards += inventory.scissors;
+    }
+    if total_cards < 2 {
+        // there is only one card, cannot proceed
+        return;
+    }
+
     let mut players = players
         .iter_mut()
         .filter(|(entity, _, _)| {
@@ -335,13 +346,17 @@ fn match_players(
     }
 }
 
-fn remove_dead_players(
+fn remove_players(
     mut commands: Commands,
     players: Query<(Entity, &Name, &Inventory), With<Player>>,
 ) {
     for (entity, name, inventory) in &players {
         if !inventory.is_alive() {
             bevy::log::info!("player dead: {name}");
+            commands.entity(entity).despawn_recursive();
+        }
+        if inventory.is_safe() {
+            bevy::log::info!("player safe: {name}");
             commands.entity(entity).despawn_recursive();
         }
     }
@@ -504,8 +519,8 @@ impl Actor for DummyActor {
         Box::pin(async move {})
     }
 
-    fn feedback(&mut self, _text: String) -> BoxedFuture<'_, ()> {
-        Box::pin(async move {})
+    fn feedback(&mut self, text: String) -> BoxedFuture<'_, ()> {
+        Box::pin(async move { panic!("{text}") })
     }
 
     fn chat_trade<'a>(
@@ -519,10 +534,33 @@ impl Actor for DummyActor {
 
     fn trade<'a>(
         &'a mut self,
-        _data: &'a PlayerData,
+        data: &'a PlayerData,
         _history: &'a [ChatRecord],
     ) -> BoxedFuture<'a, Trade> {
-        Box::pin(async move { Default::default() })
+        Box::pin(async move {
+            let deck = [
+                vec![Card::Rock; data.inventory.rock as usize],
+                vec![Card::Paper; data.inventory.paper as usize],
+                vec![Card::Scissors; data.inventory.scissors as usize],
+            ]
+            .concat();
+            let card = fastrand::choice(&deck).cloned();
+            match card {
+                Some(Card::Rock) => Trade {
+                    rock: 1,
+                    ..Default::default()
+                },
+                Some(Card::Paper) => Trade {
+                    paper: 1,
+                    ..Default::default()
+                },
+                Some(Card::Scissors) => Trade {
+                    scissors: 1,
+                    ..Default::default()
+                },
+                None => Trade::default(),
+            }
+        })
     }
 
     fn accept_trade<'a>(
@@ -558,21 +596,13 @@ impl Actor for DummyActor {
         _state: StakeState<'a>,
     ) -> BoxedFuture<'a, Option<Card>> {
         Box::pin(async move {
-            let mut deck = vec![];
-            if data.inventory.rock > 0 {
-                deck.push(Card::Rock);
-            }
-            if data.inventory.paper > 0 {
-                deck.push(Card::Paper);
-            }
-            if data.inventory.scissors > 0 {
-                deck.push(Card::Scissors);
-            }
-            let card = fastrand::choice(&deck).cloned();
-            if let Some(card) = card {
-                bevy::log::info!("{}: {}", data.name, card);
-            }
-            card
+            let deck = [
+                vec![Card::Rock; data.inventory.rock as usize],
+                vec![Card::Paper; data.inventory.paper as usize],
+                vec![Card::Scissors; data.inventory.scissors as usize],
+            ]
+            .concat();
+            fastrand::choice(&deck).cloned()
         })
     }
 }
