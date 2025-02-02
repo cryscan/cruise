@@ -643,36 +643,56 @@ pub async fn duel(
     }
 
     // step 3: players trade
-    let mut round = 0;
-    let trades = loop {
-        if round > MAX_TRAIL_ROUNDS {
-            bail!("trade failed too many times");
-        }
-        round += 1;
+    let trades = {
+        let (Some((t0, x0)), Some((t1, x1))) = join!(
+            async {
+                let mut round = 0;
+                loop {
+                    if round > MAX_TRAIL_ROUNDS {
+                        break None;
+                    }
+                    round += 1;
 
-        let trades = join!(
-            actors.0.trade(&data[0], &history),
-            actors.1.trade(&data[1], &history)
-        );
-        let x0 = match data[0].inventory.split_trade(&trades.0) {
-            Ok(inventory) => inventory,
-            Err(err) => {
-                actors.0.feedback(format!("Error: {err}")).await;
-                continue;
+                    let trade = actors.0.trade(&data[0], &history).await;
+                    let inventory = match data[0].inventory.split_trade(&trade) {
+                        Ok(inventory) => inventory,
+                        Err(err) => {
+                            actors.0.feedback(format!("Error: {err}")).await;
+                            continue;
+                        }
+                    };
+
+                    break Some((trade, inventory));
+                }
+            },
+            async {
+                let mut round = 0;
+                loop {
+                    if round > MAX_TRAIL_ROUNDS {
+                        break None;
+                    }
+                    round += 1;
+
+                    let trade = actors.1.trade(&data[1], &history).await;
+                    let inventory = match data[1].inventory.split_trade(&trade) {
+                        Ok(inventory) => inventory,
+                        Err(err) => {
+                            actors.1.feedback(format!("Error: {err}")).await;
+                            continue;
+                        }
+                    };
+
+                    break Some((trade, inventory));
+                }
             }
-        };
-        let x1 = match data[1].inventory.split_trade(&trades.1) {
-            Ok(inventory) => inventory,
-            Err(err) => {
-                actors.1.feedback(format!("Error: {err}")).await;
-                continue;
-            }
+        ) else {
+            bail!("trade failed too many times");
         };
 
         // success, update inventories
         data[0].inventory = x0;
         data[1].inventory = x1;
-        break trades;
+        (t0, t1)
     };
 
     // step 4: players agree on the trade
@@ -726,37 +746,56 @@ pub async fn duel(
     }
 
     // step 6: players bet
-    let mut round = 0;
-    let stakes = loop {
-        if round > MAX_TRAIL_ROUNDS {
-            bail!("bet failed too many times");
-        }
-        round += 1;
+    let stakes = {
+        let (Some((s0, x0)), Some((s1, x1))) = join!(
+            async {
+                let mut round = 0;
+                loop {
+                    if round > MAX_TRAIL_ROUNDS {
+                        break None;
+                    }
+                    round += 1;
 
-        let stakes = join!(
-            actors.0.bet(&data[0], &history),
-            actors.1.bet(&data[1], &history)
-        );
-        let stakes = (stakes.0.normalize(), stakes.1.normalize());
-        let x0 = match data[0].inventory.split_stake(&stakes.0) {
-            Ok(inventory) => inventory,
-            Err(err) => {
-                actors.0.feedback(format!("Error: {err}")).await;
-                continue;
+                    let stake = actors.0.bet(&data[0], &history).await;
+                    let inventory = match data[0].inventory.split_stake(&stake) {
+                        Ok(inventory) => inventory,
+                        Err(err) => {
+                            actors.0.feedback(format!("Error: {err}")).await;
+                            continue;
+                        }
+                    };
+
+                    break Some((stake, inventory));
+                }
+            },
+            async {
+                let mut round = 0;
+                loop {
+                    if round > MAX_TRAIL_ROUNDS {
+                        break None;
+                    }
+                    round += 1;
+
+                    let stake = actors.1.bet(&data[1], &history).await;
+                    let inventory = match data[1].inventory.split_stake(&stake) {
+                        Ok(inventory) => inventory,
+                        Err(err) => {
+                            actors.1.feedback(format!("Error: {err}")).await;
+                            continue;
+                        }
+                    };
+
+                    break Some((stake, inventory));
+                }
             }
-        };
-        let x1 = match data[1].inventory.split_stake(&stakes.1) {
-            Ok(inventory) => inventory,
-            Err(err) => {
-                actors.1.feedback(format!("Error: {err}")).await;
-                continue;
-            }
+        ) else {
+            bail!("bet failed too many times");
         };
 
         // success, update inventories
         data[0].inventory = x0;
         data[1].inventory = x1;
-        break stakes;
+        (s0, s1)
     };
 
     // step 7: players agree on the duel
