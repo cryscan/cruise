@@ -116,6 +116,7 @@ impl LlmActor {
     }
 
     pub async fn call_llm(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        async_std::task::yield_now().await;
         let response = ehttp::fetch_async(ehttp::Request::json(
             "http://localhost:65530/api/oai/completions",
             request,
