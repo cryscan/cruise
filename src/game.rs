@@ -17,11 +17,14 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::llm::LlmActor;
+
 pub const NUM_PLAYERS: usize = 64;
 pub const MIN_MATCH_PLAYERS: usize = 2;
 pub const NUM_CHAT_ROUNDS: usize = 4;
 pub const MAX_TRAIL_ROUNDS: usize = 3;
 
+pub const SYSTEM_NAME: &str = "Stellaris";
 const NAMES: &str = include_str!("names.txt");
 
 #[derive(Debug, Default)]
@@ -47,7 +50,7 @@ impl Plugin for GamePlugin {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Reflect, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Card {
     Rock,
     Paper,
@@ -80,7 +83,7 @@ impl Display for Card {
     }
 }
 
-#[derive(Debug, Derivative, Clone, Component, Reflect)]
+#[derive(Debug, Derivative, Clone, Component, Reflect, Serialize, Deserialize)]
 #[derivative(Default)]
 #[reflect(Component)]
 pub struct Inventory {
@@ -96,8 +99,7 @@ pub struct Inventory {
     pub scissors: u32,
 }
 
-#[derive(Debug, Default, Clone, Reflect, Serialize, Deserialize)]
-#[reflect(Default)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Trade {
     pub star: u32,
     pub coin: u32,
@@ -120,9 +122,8 @@ pub enum TradeError {
     Scissors(u32, u32),
 }
 
-#[derive(Debug, Derivative, Clone, Reflect, Serialize, Deserialize)]
+#[derive(Debug, Derivative, Clone, Serialize, Deserialize)]
 #[derivative(Default)]
-#[reflect(Default)]
 pub struct Stake {
     #[derivative(Default(value = "1"))]
     pub star: u32,
@@ -272,7 +273,7 @@ impl Table {
     }
 }
 
-#[derive(Debug, Default, Clone, Resource, Reflect)]
+#[derive(Debug, Default, Clone, Resource, Reflect, Serialize, Deserialize)]
 #[reflect(Resource)]
 pub struct PublicState {
     pub rock: u32,
@@ -280,25 +281,30 @@ pub struct PublicState {
     pub scissors: u32,
 }
 
+impl PublicState {
+    pub fn total_cards(&self) -> u32 {
+        self.rock + self.paper + self.scissors
+    }
+}
+
 fn setup_scene(mut commands: Commands) {
     let names = NAMES.split("\n").map(|x| x.trim()).collect_vec();
     commands.spawn_batch((0..NUM_PLAYERS).map(move |index| {
         (
             Name::new(names[index]),
-            Player::new(DummyActor),
+            Player::new(LlmActor::new()),
             Inventory::default(),
         )
     }));
 }
 
 fn update_public_state(mut state: ResMut<PublicState>, players: Query<&Inventory, With<Player>>) {
-    let mut x = PublicState::default();
+    *state = Default::default();
     for inventory in &players {
-        x.rock += inventory.rock;
-        x.paper += inventory.paper;
-        x.scissors += inventory.scissors;
+        state.rock += inventory.rock;
+        state.paper += inventory.paper;
+        state.scissors += inventory.scissors;
     }
-    *state = x;
 }
 
 /// Find players that are not currently in match, and put them onto a table.
@@ -421,43 +427,90 @@ fn poll_duel(
     }
 }
 
-#[derive(Debug, Clone, Reflect)]
+#[derive(Debug, Clone)]
 pub struct PlayerData {
     pub entity: Entity,
     pub name: Name,
     pub inventory: Inventory,
 }
 
-#[derive(Debug, Clone, Reflect)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Role {
+    #[default]
+    None,
     System(Entity),
-    Actor(Entity, Name),
-    Inner(Entity, Name),
+    Actor(Entity, String),
+    Inner(Entity, String),
+}
+
+impl Role {
+    pub fn system(entity: Entity) -> Self {
+        Self::System(entity)
+    }
+
+    pub fn actor(entity: Entity, name: impl ToString) -> Self {
+        let name = name.to_string().trim().to_owned();
+        Self::Actor(entity, name)
+    }
+
+    pub fn inner(entity: Entity, name: impl ToString) -> Self {
+        let name = name.to_string().trim().to_owned();
+        Self::Inner(entity, name)
+    }
 }
 
 impl Display for Role {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Role::System(_) => write!(f, "System"),
-            Role::Actor(_, name) => writeln!(f, "{name}"),
-            Role::Inner(_, name) => writeln!(f, "{name} (Thinks)"),
+            Role::None => write!(f, ""),
+            Role::System(_) => write!(f, "{SYSTEM_NAME}",),
+            Role::Actor(_, name) => write!(f, "{name}"),
+            Role::Inner(_, name) => write!(f, "{name} (thinks)"),
         }
     }
 }
 
-#[derive(Debug, Clone, Reflect)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChatKind {
+    Trade(usize),
+    Duel(usize),
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatRecordId;
+
+#[derive(Debug, Derivative, Clone, Serialize, Deserialize)]
+#[derivative(PartialEq, Eq)]
 pub struct ChatRecord {
+    #[serde(skip)]
+    pub id: uid::Id<ChatRecordId>,
+    #[derivative(PartialEq = "ignore")]
     pub role: Role,
+    #[derivative(PartialEq = "ignore")]
     pub content: String,
 }
 
-#[derive(Debug, Clone, Copy, Reflect)]
-pub struct TradeState<'a> {
-    pub mine: &'a Trade,
-    pub others: &'a Trade,
+impl ChatRecord {
+    pub fn new(role: Role, content: impl ToString) -> Self {
+        let id = uid::Id::new();
+        let content = content.to_string();
+        Self { id, role, content }
+    }
 }
 
-#[derive(Debug, Clone, Copy, Reflect)]
+impl Display for ChatRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.role, self.content)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TradeState<'a> {
+    pub this: &'a Trade,
+    pub that: &'a Trade,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct StakeState<'a> {
     pub this: &'a Stake,
     pub that: &'a Stake,
@@ -465,15 +518,19 @@ pub struct StakeState<'a> {
 
 pub trait Actor: ConditionalSend + Sync + 'static {
     /// Notify the actor about how many cards are there on the stage.
-    fn notify<'a>(&'a mut self, state: &'a PublicState) -> BoxedFuture<'a, ()>;
+    fn notify<'a>(
+        &'a mut self,
+        data: &'a PlayerData,
+        state: &'a PublicState,
+    ) -> BoxedFuture<'a, ()>;
     /// Provide feedback to the actor (due to erroneous actions).
-    fn feedback(&mut self, text: String) -> BoxedFuture<'_, ()>;
+    fn feedback<'a>(&'a mut self, data: &'a PlayerData, text: String) -> BoxedFuture<'a, ()>;
     /// Chat with the actor.
-    fn chat_trade<'a>(
+    fn chat<'a>(
         &'a mut self,
         data: &'a PlayerData,
         history: &'a [ChatRecord],
-        round: usize,
+        kind: ChatKind,
     ) -> BoxedFuture<'a, Vec<ChatRecord>>;
     /// Trade with another actor.
     fn trade<'a>(
@@ -488,13 +545,6 @@ pub trait Actor: ConditionalSend + Sync + 'static {
         history: &'a [ChatRecord],
         state: TradeState<'a>,
     ) -> BoxedFuture<'a, bool>;
-    /// Chat with the actor.
-    fn chat_duel<'a>(
-        &'a mut self,
-        data: &'a PlayerData,
-        history: &'a [ChatRecord],
-        round: usize,
-    ) -> BoxedFuture<'a, Vec<ChatRecord>>;
     /// Bet for the duel.
     fn bet<'a>(
         &'a mut self,
@@ -510,24 +560,27 @@ pub trait Actor: ConditionalSend + Sync + 'static {
     ) -> BoxedFuture<'a, Option<Card>>;
 }
 
-#[derive(Debug, Default, Clone, Copy, Reflect)]
-#[reflect(Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct DummyActor;
 
 impl Actor for DummyActor {
-    fn notify<'a>(&'a mut self, _state: &'a PublicState) -> BoxedFuture<'a, ()> {
+    fn notify<'a>(
+        &'a mut self,
+        _data: &'a PlayerData,
+        _state: &'a PublicState,
+    ) -> BoxedFuture<'a, ()> {
         Box::pin(async move {})
     }
 
-    fn feedback(&mut self, text: String) -> BoxedFuture<'_, ()> {
+    fn feedback<'a>(&'a mut self, _data: &'a PlayerData, text: String) -> BoxedFuture<'a, ()> {
         Box::pin(async move { panic!("{text}") })
     }
 
-    fn chat_trade<'a>(
+    fn chat<'a>(
         &'a mut self,
         _data: &'a PlayerData,
         _history: &'a [ChatRecord],
-        _round: usize,
+        _kind: ChatKind,
     ) -> BoxedFuture<'a, Vec<ChatRecord>> {
         Box::pin(async move { vec![] })
     }
@@ -572,15 +625,6 @@ impl Actor for DummyActor {
         Box::pin(async move { true })
     }
 
-    fn chat_duel<'a>(
-        &'a mut self,
-        _data: &'a PlayerData,
-        _history: &'a [ChatRecord],
-        _round: usize,
-    ) -> BoxedFuture<'a, Vec<ChatRecord>> {
-        Box::pin(async move { vec![] })
-    }
-
     fn bet<'a>(
         &'a mut self,
         _data: &'a PlayerData,
@@ -609,13 +653,13 @@ impl Actor for DummyActor {
 
 pub async fn duel(
     state: PublicState,
-    actors: [Arc<Mutex<dyn Actor>>; 2],
-    mut data: [PlayerData; 2],
+    [a0, a1]: [Arc<Mutex<dyn Actor>>; 2],
+    [mut d0, mut d1]: [PlayerData; 2],
 ) -> Result<[Inventory; 2]> {
-    let mut actors = join!(actors[0].lock(), actors[1].lock());
+    let (mut a0, mut a1) = join!(a0.lock(), a1.lock());
 
     // step 1: notify both players about public state
-    join!(actors.0.notify(&state), actors.1.notify(&state));
+    join!(a0.notify(&d0, &state), a1.notify(&d1, &state));
 
     // step 2: players chat before trade
     let mut history: Vec<ChatRecord> = vec![];
@@ -626,24 +670,24 @@ pub async fn duel(
             .iter()
             .filter(|x| match x.role.clone() {
                 Role::System(entity) | Role::Inner(entity, _) => entity == data.entity,
-                Role::Actor(_, _) => true,
+                _ => true,
             })
             .cloned()
             .collect_vec()
     };
 
     for round in 0..NUM_CHAT_ROUNDS {
-        let observation = observe(&data[0], &history);
-        let mut records = actors.0.chat_trade(&data[0], &observation, round).await;
+        let observation = observe(&d0, &history);
+        let mut records = a0.chat(&d0, &observation, ChatKind::Trade(round)).await;
         history.append(&mut records);
 
-        let observation = observe(&data[1], &history);
-        let mut records = actors.1.chat_trade(&data[1], &observation, round).await;
+        let observation = observe(&d1, &history);
+        let mut records = a1.chat(&d1, &observation, ChatKind::Trade(round)).await;
         history.append(&mut records);
     }
 
     // step 3: players trade
-    let trades = {
+    let (t0, t1) = {
         let (Some((t0, x0)), Some((t1, x1))) = join!(
             async {
                 let mut round = 0;
@@ -653,11 +697,11 @@ pub async fn duel(
                     }
                     round += 1;
 
-                    let trade = actors.0.trade(&data[0], &history).await;
-                    let inventory = match data[0].inventory.split_trade(&trade) {
+                    let trade = a0.trade(&d0, &history).await;
+                    let inventory = match d0.inventory.split_trade(&trade) {
                         Ok(inventory) => inventory,
                         Err(err) => {
-                            actors.0.feedback(format!("Error: {err}")).await;
+                            a0.feedback(&d0, format!("Error: {err}")).await;
                             continue;
                         }
                     };
@@ -673,11 +717,11 @@ pub async fn duel(
                     }
                     round += 1;
 
-                    let trade = actors.1.trade(&data[1], &history).await;
-                    let inventory = match data[1].inventory.split_trade(&trade) {
+                    let trade = a1.trade(&d1, &history).await;
+                    let inventory = match d1.inventory.split_trade(&trade) {
                         Ok(inventory) => inventory,
                         Err(err) => {
-                            actors.1.feedback(format!("Error: {err}")).await;
+                            a1.feedback(&d1, format!("Error: {err}")).await;
                             continue;
                         }
                     };
@@ -690,63 +734,62 @@ pub async fn duel(
         };
 
         // success, update inventories
-        data[0].inventory = x0;
-        data[1].inventory = x1;
+        d0.inventory = x0;
+        d1.inventory = x1;
         (t0, t1)
     };
 
     // step 4: players agree on the trade
-    let agreements = join!(
-        actors.0.accept_trade(
-            &data[0],
+    match join!(
+        a0.accept_trade(
+            &d0,
             &history,
             TradeState {
-                mine: &trades.0,
-                others: &trades.1
+                this: &t0,
+                that: &t1
             }
         ),
-        actors.1.accept_trade(
-            &data[1],
+        a1.accept_trade(
+            &d1,
             &history,
             TradeState {
-                mine: &trades.1,
-                others: &trades.0
+                this: &t1,
+                that: &t0
             }
         )
-    );
-    match agreements {
+    ) {
         (true, true) => {
             // players do reach an agreement, perform the trade
-            data[0].inventory.apply_trade(&trades.1);
-            data[1].inventory.apply_trade(&trades.0);
+            d0.inventory.apply_trade(&t1);
+            d1.inventory.apply_trade(&t0);
         }
         _ => {
             // players do not reach an agreement, rewind
-            data[0].inventory.apply_trade(&trades.0);
-            data[1].inventory.apply_trade(&trades.1);
+            d0.inventory.apply_trade(&t0);
+            d1.inventory.apply_trade(&t1);
         }
     }
 
     // check if we can proceed to duel
-    if data.iter().any(|x| !x.inventory.can_duel()) {
-        return Ok(data.map(|x| x.inventory));
+    if [&d0, &d1].iter().any(|x| !x.inventory.can_duel()) {
+        return Ok([d0, d1].map(|x| x.inventory));
     }
 
     // step 5: player chat before duel
     let mut history: Vec<ChatRecord> = vec![];
 
     for round in 0..NUM_CHAT_ROUNDS {
-        let observation = observe(&data[0], &history);
-        let mut records = actors.0.chat_duel(&data[0], &observation, round).await;
+        let observation = observe(&d0, &history);
+        let mut records = a0.chat(&d0, &observation, ChatKind::Duel(round)).await;
         history.append(&mut records);
 
-        let observation = observe(&data[1], &history);
-        let mut records = actors.1.chat_duel(&data[1], &observation, round).await;
+        let observation = observe(&d1, &history);
+        let mut records = a1.chat(&d1, &observation, ChatKind::Duel(round)).await;
         history.append(&mut records);
     }
 
     // step 6: players bet
-    let stakes = {
+    let (s0, s1) = {
         let (Some((s0, x0)), Some((s1, x1))) = join!(
             async {
                 let mut round = 0;
@@ -756,11 +799,11 @@ pub async fn duel(
                     }
                     round += 1;
 
-                    let stake = actors.0.bet(&data[0], &history).await;
-                    let inventory = match data[0].inventory.split_stake(&stake) {
+                    let stake = a0.bet(&d0, &history).await;
+                    let inventory = match d0.inventory.split_stake(&stake) {
                         Ok(inventory) => inventory,
                         Err(err) => {
-                            actors.0.feedback(format!("Error: {err}")).await;
+                            a0.feedback(&d0, format!("Error: {err}")).await;
                             continue;
                         }
                     };
@@ -776,11 +819,11 @@ pub async fn duel(
                     }
                     round += 1;
 
-                    let stake = actors.1.bet(&data[1], &history).await;
-                    let inventory = match data[1].inventory.split_stake(&stake) {
+                    let stake = a1.bet(&d1, &history).await;
+                    let inventory = match d1.inventory.split_stake(&stake) {
                         Ok(inventory) => inventory,
                         Err(err) => {
-                            actors.1.feedback(format!("Error: {err}")).await;
+                            a1.feedback(&d1, format!("Error: {err}")).await;
                             continue;
                         }
                     };
@@ -793,8 +836,8 @@ pub async fn duel(
         };
 
         // success, update inventories
-        data[0].inventory = x0;
-        data[1].inventory = x1;
+        d0.inventory = x0;
+        d1.inventory = x1;
         (s0, s1)
     };
 
@@ -807,43 +850,43 @@ pub async fn duel(
         round += 1;
 
         let cards = join!(
-            actors.0.accept_duel(
-                &data[0],
+            a0.accept_duel(
+                &d0,
                 &history,
                 StakeState {
-                    this: &stakes.0,
-                    that: &stakes.1
+                    this: &s0,
+                    that: &s1
                 }
             ),
-            actors.1.accept_duel(
-                &data[1],
+            a1.accept_duel(
+                &d1,
                 &history,
                 StakeState {
-                    this: &stakes.1,
-                    that: &stakes.0
+                    this: &s1,
+                    that: &s0
                 }
             )
         );
 
         if let (Some(lhs), Some(rhs)) = cards {
-            let x0 = match data[0].inventory.split_duel(lhs) {
+            let x0 = match d0.inventory.split_duel(lhs) {
                 Ok(inventory) => inventory,
                 Err(err) => {
-                    actors.0.feedback(format!("Error: {err}")).await;
+                    a0.feedback(&d0, format!("Error: {err}")).await;
                     continue;
                 }
             };
-            let x1 = match data[1].inventory.split_duel(rhs) {
+            let x1 = match d1.inventory.split_duel(rhs) {
                 Ok(inventory) => inventory,
                 Err(err) => {
-                    actors.1.feedback(format!("Error: {err}")).await;
+                    a1.feedback(&d1, format!("Error: {err}")).await;
                     continue;
                 }
             };
 
             // success, update inventories
-            data[0].inventory = x0;
-            data[1].inventory = x1;
+            d0.inventory = x0;
+            d1.inventory = x1;
         }
 
         break cards;
@@ -852,19 +895,19 @@ pub async fn duel(
     match cards {
         (Some(lhs), Some(rhs)) => match lhs.compare(rhs) {
             Some(index) => {
-                let stake = stakes.0 + stakes.1;
-                data[index].inventory.apply_stake(&stake);
+                let stake = s0 + s1;
+                [&mut d0, &mut d1][index].inventory.apply_stake(&stake);
             }
             None => {
-                data[0].inventory.apply_stake(&stakes.0);
-                data[1].inventory.apply_stake(&stakes.1);
+                d0.inventory.apply_stake(&s0);
+                d1.inventory.apply_stake(&s1);
             }
         },
         _ => {
-            data[0].inventory.apply_stake(&stakes.0);
-            data[1].inventory.apply_stake(&stakes.1);
+            d0.inventory.apply_stake(&s0);
+            d1.inventory.apply_stake(&s1);
         }
     }
 
-    Ok(data.map(|x| x.inventory))
+    Ok([d0, d1].map(|x| x.inventory))
 }

@@ -4,6 +4,7 @@ use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use crate::game::GamePlugin;
 
 pub mod game;
+pub mod llm;
 
 fn main() {
     App::new()
