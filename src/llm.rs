@@ -653,10 +653,11 @@ impl LlmActor {
 
     pub async fn feedback_duel<'a>(&'a mut self, player: &'a PlayerData, result: DuelResult) {
         let prompt = match result {
-            DuelResult::Tie => "It's a tie, both of your stakes are returned.",
-            DuelResult::Win => "You win.",
+            DuelResult::Tie => "It's a tie, you both draw the same card.",
+            DuelResult::Win => "You win!",
             DuelResult::Lose => "You lose.",
         };
+        let prompt = format!("Let's reveal duel result... {prompt}");
         self.chat
             .push(ChatRecord::new(Role::System(player.entity), prompt));
 
@@ -681,47 +682,47 @@ impl LlmActor {
             .await
         });
 
-        // AI responses
-        self.chat.push({
-            let role = Role::Assistant(player.entity);
-            let prompt = Self::prompt_role(&self.chat, &role);
-            let sampler = Sampler {
-                kind: SamplerKind::Typical,
-                ..Default::default()
-            };
-            self.chat_llm(
-                format!("feedback_duel_1 ({})", player.name),
-                role,
-                prompt,
-                "",
-                "",
-                Some(&player),
-                None,
-                sampler,
-            )
-            .await
-        });
+        // // AI responses
+        // self.chat.push({
+        //     let role = Role::Assistant(player.entity);
+        //     let prompt = Self::prompt_role(&self.chat, &role);
+        //     let sampler = Sampler {
+        //         kind: SamplerKind::Typical,
+        //         ..Default::default()
+        //     };
+        //     self.chat_llm(
+        //         format!("feedback_duel_1 ({})", player.name),
+        //         role,
+        //         prompt,
+        //         "",
+        //         "",
+        //         Some(&player),
+        //         None,
+        //         sampler,
+        //     )
+        //     .await
+        // });
 
-        // player reflects
-        self.chat.push({
-            let role = Role::actor(player.entity, &player.name);
-            let prompt = Self::prompt_role(&self.chat, &role);
-            let sampler = Sampler {
-                kind: SamplerKind::Typical,
-                ..Default::default()
-            };
-            self.chat_llm(
-                "feedback_duel_2",
-                role,
-                prompt,
-                "",
-                "",
-                Some(&player),
-                None,
-                sampler,
-            )
-            .await
-        });
+        // // player reflects
+        // self.chat.push({
+        //     let role = Role::actor(player.entity, &player.name);
+        //     let prompt = Self::prompt_role(&self.chat, &role);
+        //     let sampler = Sampler {
+        //         kind: SamplerKind::Typical,
+        //         ..Default::default()
+        //     };
+        //     self.chat_llm(
+        //         "feedback_duel_2",
+        //         role,
+        //         prompt,
+        //         "",
+        //         "",
+        //         Some(&player),
+        //         None,
+        //         sampler,
+        //     )
+        //     .await
+        // });
     }
 }
 
