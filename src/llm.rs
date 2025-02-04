@@ -133,12 +133,13 @@ impl LlmActor {
         Ok(response.json()?)
     }
 
-    pub async fn chat_llm<T: AsRef<str>>(
+    pub async fn chat_llm(
         &self,
         role: Role,
         prompt: impl AsRef<str>,
         prefix: impl AsRef<str>,
-        names: &[T],
+        player: Option<&PlayerData>,
+        opponent: Option<&OpponentData>,
         sampler: Sampler,
     ) -> ChatRecord {
         loop {
@@ -153,13 +154,25 @@ impl LlmActor {
                 "\nQ:".into(),
                 "\nAssistant:".into(),
                 "\nAI:".into(),
+                "\n{".into(),
                 "\n[".into(),
+                "\n<".into(),
             ];
-            stop.extend(
-                names
-                    .iter()
-                    .map(|name| format!("\n{}", name.as_ref().trim())),
-            );
+            if let Some(player) = player {
+                stop.extend([
+                    format!("\n{}", player.name),
+                    format!("\n*{}", player.name),
+                    format!("\n**{}", player.name),
+                ]);
+            }
+            if let Some(opponent) = opponent {
+                stop.extend([
+                    format!("\n{}", opponent.name),
+                    format!("\n*{}", opponent.name),
+                    format!("\n**{}", opponent.name),
+                    format!("\n({}", opponent.name),
+                ]);
+            }
 
             let request = CompletionRequest {
                 prompt: format!("{prompt}{prefix}"),
@@ -227,12 +240,12 @@ impl LlmActor {
         self.chat.push({
             let role = Role::actor(player.entity, &player.name);
             let prompt = self.prompt_role(&role);
-            let names = &[&player.name];
             let sampler = Sampler {
                 kind: SamplerKind::Typical,
                 ..Default::default()
             };
-            self.chat_llm(role, prompt, "", names, sampler).await
+            self.chat_llm(role, prompt, "", Some(&player), None, sampler)
+                .await
         });
     }
 
@@ -272,33 +285,24 @@ impl LlmActor {
         }
 
         // player thinks
+        #[cfg(any())]
         self.chat.push({
             let role = Role::inner(player.entity, &player.name);
             let prompt = self.prompt_role(&role);
-            let names = &[&player.name, &opponent.name];
             let sampler = Default::default();
-            self.chat_llm(role, prompt, "", names, sampler).await
+            self.chat_llm(role, prompt, "", Some(player), Some(opponent), sampler)
+                .await
         });
 
-        let record = if round == 0 || round == 1 {
+        let record = {
             let role = Role::actor(player.entity, &player.name);
             let prompt = self.prompt_role(&role);
-            let prefix = format!(" (To {})", opponent.name);
-            let names = &[&player.name, &opponent.name];
             let sampler = Sampler {
                 kind: SamplerKind::Typical,
                 ..Default::default()
             };
-            self.chat_llm(role, prompt, prefix, names, sampler).await
-        } else {
-            let role = Role::actor(player.entity, &player.name);
-            let prompt = self.prompt_role(&role);
-            let names = &[&player.name, &opponent.name];
-            let sampler = Sampler {
-                kind: SamplerKind::Typical,
-                ..Default::default()
-            };
-            self.chat_llm(role, prompt, "", names, sampler).await
+            self.chat_llm(role, prompt, "", Some(&player), Some(&opponent), sampler)
+                .await
         };
         public_records.push(record.clone());
         self.chat.push(record);

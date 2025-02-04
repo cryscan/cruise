@@ -19,7 +19,7 @@ use thiserror::Error;
 
 use crate::llm::LlmActor;
 
-pub const NUM_PLAYERS: usize = 64;
+pub const NUM_PLAYERS: usize = 4;
 pub const MIN_MATCH_PLAYERS: usize = 2;
 pub const NUM_CHAT_ROUNDS: usize = 4;
 pub const MAX_TRAIL_ROUNDS: usize = 3;
