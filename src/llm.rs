@@ -7,8 +7,9 @@ use derivative::Derivative;
 use serde::{Deserialize, Serialize};
 
 use crate::game::{
-    Actor, Card, ChatKind, ChatRecord, DummyActor, OpponentData, PlayerData, PublicState, Role,
-    Stake, StakeState, Trade, TradeState, ASSISTANT_NAME, NUM_CHAT_ROUNDS, SYSTEM_NAME,
+    Actor, Card, ChatKind, ChatRecord, DuelResult, DummyActor, OpponentData, PlayerData,
+    PublicState, Role, Stake, StakeState, Trade, TradeState, ASSISTANT_NAME, NUM_CHAT_ROUNDS,
+    SYSTEM_NAME,
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,6 +143,7 @@ impl LlmActor {
 
     pub async fn chat_llm(
         &self,
+        tag: impl AsRef<str>,
         role: Role,
         prompt: impl AsRef<str>,
         prefix: impl AsRef<str>,
@@ -151,6 +153,7 @@ impl LlmActor {
         sampler: Sampler,
     ) -> ChatRecord {
         loop {
+            let tag = tag.as_ref();
             let prompt = prompt.as_ref();
             let prefix = prefix.as_ref();
             let bnf_schema = bnf_schema.as_ref().into();
@@ -206,7 +209,7 @@ impl LlmActor {
 
             let content = format!("{prefix}{}", response.model_text());
             let record = ChatRecord::new(role, content);
-            bevy::log::info!("{record}");
+            bevy::log::info!("[{tag}] {record}");
 
             self.llm.lock().await.push(LlmRecord { request, response });
             break record;
@@ -259,7 +262,7 @@ impl LlmActor {
                 kind: SamplerKind::Typical,
                 ..Default::default()
             };
-            self.chat_llm(role, prompt, "", "", Some(&player), None, sampler)
+            self.chat_llm("notify", role, prompt, "", "", Some(&player), None, sampler)
                 .await
         });
     }
@@ -308,6 +311,7 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
+                format!("chat_trade_{round}"),
                 role,
                 prompt,
                 "",
@@ -421,6 +425,7 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
+                "accept_trade",
                 role,
                 prompt,
                 "",
@@ -431,6 +436,11 @@ impl LlmActor {
             )
             .await
         });
+
+        self.chat.push(ChatRecord::new(
+            Role::System(player.entity),
+            include_str!("prompts/trade_7.md"),
+        ));
 
         let record = {
             let role = Role::actor(player.entity, &player.name);
@@ -451,6 +461,7 @@ impl LlmActor {
                 "I give my response with a \"",
             ];
             self.chat_llm(
+                "accept_trade_confirm",
                 role,
                 prompt,
                 fastrand::choice(&prefixes).unwrap(),
@@ -472,7 +483,7 @@ impl LlmActor {
             [true, true] => ChatRecord::new(
                 Role::Assistant(player.entity),
                 format!(
-                    include_str!("prompts/trade_7_0.md"),
+                    include_str!("prompts/trade_8_0.md"),
                     player.inventory.star,
                     player.inventory.coin,
                     player.inventory.rock,
@@ -482,7 +493,7 @@ impl LlmActor {
             ),
             _ => ChatRecord::new(
                 Role::Assistant(player.entity),
-                include_str!("prompts/trade_7_1.md"),
+                include_str!("prompts/trade_8_1.md"),
             ),
         };
         self.chat.push(record);
@@ -495,8 +506,221 @@ impl LlmActor {
                 kind: SamplerKind::Typical,
                 ..Default::default()
             };
-            self.chat_llm(role, prompt, "", "", Some(&player), None, sampler)
+            self.chat_llm(
+                "feedback_trade",
+                role,
+                prompt,
+                "",
+                "",
+                Some(&player),
+                None,
+                sampler,
+            )
+            .await
+        });
+    }
+
+    pub async fn bet<'a>(
+        &'a mut self,
+        player: &'a PlayerData,
+        opponent: &'a OpponentData,
+        history: &'a [ChatRecord],
+    ) -> Stake {
+        // system reports opponent status
+        self.chat.push(ChatRecord::new(
+            Role::Assistant(player.entity),
+            format!(
+                include_str!("prompts/duel_0.md"),
+                opponent.name, opponent.star, opponent.card
+            ),
+        ));
+
+        // player reflects
+        self.chat.push({
+            let role = Role::actor(player.entity, &player.name);
+            let prompt = Self::prompt_role(&self.chat, &role);
+            let sampler = Sampler {
+                kind: SamplerKind::Typical,
+                ..Default::default()
+            };
+            self.chat_llm("bet", role, prompt, "", "", Some(&player), None, sampler)
                 .await
+        });
+
+        self.dummy.bet(player, opponent, history).await
+    }
+
+    pub async fn accept_duel<'a>(
+        &'a mut self,
+        player: &'a PlayerData,
+        opponent: &'a OpponentData,
+        _history: &'a [ChatRecord],
+        _state: StakeState<'a>,
+    ) -> Option<Card> {
+        self.chat.push(ChatRecord::new(
+            Role::Assistant(player.entity),
+            include_str!("prompts/duel_1.md"),
+        ));
+
+        self.chat.push({
+            let role = Role::actor(player.entity, &player.name);
+            let prompt = Self::prompt_role(&self.chat, &role);
+            let sampler = Sampler {
+                kind: SamplerKind::Typical,
+                ..Default::default()
+            };
+            self.chat_llm(
+                "accept_duel",
+                role,
+                prompt,
+                "",
+                "",
+                Some(&player),
+                None,
+                sampler,
+            )
+            .await
+        });
+
+        self.chat.push(ChatRecord::new(
+            Role::System(player.entity),
+            include_str!("prompts/duel_2.md"),
+        ));
+
+        let record = {
+            let role = Role::actor(player.entity, &player.name);
+            let prompt = Self::prompt_role(&self.chat, &role);
+            let sampler = Sampler {
+                kind: SamplerKind::Typical,
+                ..Default::default()
+            };
+            let prefixes = [
+                "Ok, the card I draw is \"",
+                "All right, the card I'm drawing is \"",
+                "Fine, the card I draw turns out to be \"",
+            ];
+
+            let deck = [
+                vec![Card::Rock; player.inventory.rock as usize],
+                vec![Card::Paper; player.inventory.paper as usize],
+                vec![Card::Scissors; player.inventory.scissors as usize],
+            ]
+            .concat();
+            let bnf_schema = match (
+                deck.contains(&Card::Rock),
+                deck.contains(&Card::Paper),
+                deck.contains(&Card::Scissors),
+            ) {
+                (true, true, true) => {
+                    "start ::= \"Rock\\\".\" | \"Paper\\\".\" | \"Scissors\\\".\";"
+                }
+                (true, true, false) => "start ::= \"Rock\\\".\" | \"Paper\\\".\";",
+                (true, false, true) => "start ::= \"Rock\\\".\" | \"Scissors\\\".\";",
+                (true, false, false) => "start ::= \"Rock\\\".\";",
+                (false, true, true) => "start ::= \"Paper\\\".\" | \"Scissors\\\".\";",
+                (false, true, false) => "start ::= \"Paper\\\".\";",
+                (false, false, true) => "start ::= \"Scissors\\\".\";",
+                (false, false, false) => unreachable!(),
+            };
+
+            self.chat_llm(
+                "accept_duel_confirm",
+                role,
+                prompt,
+                fastrand::choice(&prefixes).unwrap(),
+                bnf_schema,
+                Some(&player),
+                Some(&opponent),
+                sampler,
+            )
+            .await
+        };
+
+        let ans = match (
+            record.content.contains("Rock"),
+            record.content.contains("Paper"),
+            record.content.contains("Scissors"),
+        ) {
+            (true, _, _) => Some(Card::Rock),
+            (false, true, _) => Some(Card::Paper),
+            (false, false, true) => Some(Card::Scissors),
+            _ => None,
+        };
+
+        self.chat.push(record);
+        ans
+    }
+
+    pub async fn feedback_duel<'a>(&'a mut self, player: &'a PlayerData, result: DuelResult) {
+        let prompt = match result {
+            DuelResult::Tie => "It's a tie, both of your stakes are returned.",
+            DuelResult::Win => "You win.",
+            DuelResult::Lose => "You lose.",
+        };
+        self.chat
+            .push(ChatRecord::new(Role::System(player.entity), prompt));
+
+        // player reflects
+        self.chat.push({
+            let role = Role::actor(player.entity, &player.name);
+            let prompt = Self::prompt_role(&self.chat, &role);
+            let sampler = Sampler {
+                kind: SamplerKind::Typical,
+                ..Default::default()
+            };
+            self.chat_llm(
+                "feedback_duel_0",
+                role,
+                prompt,
+                "",
+                "",
+                Some(&player),
+                None,
+                sampler,
+            )
+            .await
+        });
+
+        // AI responses
+        self.chat.push({
+            let role = Role::Assistant(player.entity);
+            let prompt = Self::prompt_role(&self.chat, &role);
+            let sampler = Sampler {
+                kind: SamplerKind::Typical,
+                ..Default::default()
+            };
+            self.chat_llm(
+                format!("feedback_duel_1 ({})", player.name),
+                role,
+                prompt,
+                "",
+                "",
+                Some(&player),
+                None,
+                sampler,
+            )
+            .await
+        });
+
+        // player reflects
+        self.chat.push({
+            let role = Role::actor(player.entity, &player.name);
+            let prompt = Self::prompt_role(&self.chat, &role);
+            let sampler = Sampler {
+                kind: SamplerKind::Typical,
+                ..Default::default()
+            };
+            self.chat_llm(
+                "feedback_duel_2",
+                role,
+                prompt,
+                "",
+                "",
+                Some(&player),
+                None,
+                sampler,
+            )
+            .await
         });
     }
 }
@@ -560,16 +784,24 @@ impl Actor for LlmActor {
         opponent: &'a OpponentData,
         history: &'a [ChatRecord],
     ) -> BoxedFuture<'a, Stake> {
-        self.dummy.bet(player, opponent, history)
+        Box::pin(self.bet(player, opponent, history))
     }
 
     fn accept_duel<'a>(
         &'a mut self,
-        players: &'a PlayerData,
+        player: &'a PlayerData,
         opponent: &'a OpponentData,
         history: &'a [ChatRecord],
         state: StakeState<'a>,
     ) -> BoxedFuture<'a, Option<Card>> {
-        self.dummy.accept_duel(players, opponent, history, state)
+        Box::pin(self.accept_duel(player, opponent, history, state))
+    }
+
+    fn feedback_duel<'a>(
+        &'a mut self,
+        player: &'a PlayerData,
+        result: DuelResult,
+    ) -> BoxedFuture<'a, ()> {
+        Box::pin(self.feedback_duel(player, result))
     }
 }

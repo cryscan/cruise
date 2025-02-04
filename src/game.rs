@@ -545,6 +545,13 @@ pub struct StakeState<'a> {
     pub that: &'a Stake,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum DuelResult {
+    Tie,
+    Win,
+    Lose,
+}
+
 pub trait Actor: ConditionalSend + Sync + 'static {
     /// Notify the actor about how many cards are there on the stage.
     fn notify<'a>(
@@ -602,6 +609,11 @@ pub trait Actor: ConditionalSend + Sync + 'static {
         history: &'a [ChatRecord],
         state: StakeState<'a>,
     ) -> BoxedFuture<'a, Option<Card>>;
+    fn feedback_duel<'a>(
+        &'a mut self,
+        player: &'a PlayerData,
+        result: DuelResult,
+    ) -> BoxedFuture<'a, ()>;
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -709,6 +721,14 @@ impl Actor for DummyActor {
             .concat();
             fastrand::choice(&deck).cloned()
         })
+    }
+
+    fn feedback_duel<'a>(
+        &'a mut self,
+        _player: &'a PlayerData,
+        _result: DuelResult,
+    ) -> BoxedFuture<'a, ()> {
+        Box::pin(async move {})
     }
 }
 
@@ -992,10 +1012,25 @@ pub async fn duel(
             Some(index) => {
                 let stake = s0 + s1;
                 [&mut p0, &mut p1][index].inventory.apply_stake(&stake);
+                match index {
+                    0 => join!(
+                        a0.feedback_duel(&p0, DuelResult::Win),
+                        a1.feedback_duel(&p1, DuelResult::Lose)
+                    ),
+                    1 => join!(
+                        a0.feedback_duel(&p0, DuelResult::Lose),
+                        a1.feedback_duel(&p1, DuelResult::Win)
+                    ),
+                    _ => unreachable!(),
+                };
             }
             None => {
                 p0.inventory.apply_stake(&s0);
                 p1.inventory.apply_stake(&s1);
+                join!(
+                    a0.feedback_duel(&p0, DuelResult::Tie),
+                    a1.feedback_duel(&p1, DuelResult::Tie)
+                );
             }
         },
         _ => {

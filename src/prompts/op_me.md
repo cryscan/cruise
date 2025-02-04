@@ -1,2 +1,1 @@
-(Quirking an eyebrow while shuffling cards)  
 Got it. So the playbook's this: stick to predictable rotation to fly under the radar, go full monopoly gambit to control supply, or form temporary alliances with built-in betrayal protocols.

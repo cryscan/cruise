@@ -1,4 +1,4 @@
-Owner, global card residue has decreased to {}. Tactical breakdown commencing:
+Owner, global card residue has decreased to {}, specifically:
 - Rock: {}
 - Paper: {}
 - Scissors: {}

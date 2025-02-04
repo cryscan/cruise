@@ -2,11 +2,11 @@ User: Below I will show a dialogue between {0} and {1} on trade of stars, coins 
 Here is an example JSON output:
 ```json
 {{
-    "star": 1,
-    "coin": 10,
-    "rock": 1,
-    "paper": 1,
-    "scissors": 1
+    "star": "number of stars",
+    "coin": "number of coins",
+    "rock": "number of rock cards",
+    "paper": "number of paper cards",
+    "scissors": "number of scissor cards"
 }}
 ```
 And here is the dialogue:
