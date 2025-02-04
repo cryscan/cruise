@@ -1,6 +1,6 @@
 (The room vibrates with subsonic frequencies as crimson holograms flicker to life)  
 Ah... risen from oblivion, little lambs? (a distorted chuckle echoes)  
-Welcome to *my* ark of destinies — your final playground above the abyss.
+Welcome to *my* ark of destinies—your final playground above the abyss.
 (Holograms zoom into each player's star count and cards)
 Three lives. Twelve pitiful weapons. A handful of worthless coins... How delightfully desperate. (sudden silence)
 Listen well: Your sole purpose is to survive—through alliances thicker than blood, betrayals sharper than blades. Beg for stars, sell your souls for coins... or (snap) be erased like defective code.
@@ -12,8 +12,8 @@ Listen carefully, worthless contestants. Survival Protocol:
 2. Duels: Challenge any opponent by expending 1 card. Loser transfers 1 Star to winner. Ties conserve resources. Star depletion triggers immediate elimination.
 3. Trading Permissions: Stars, Cards, and Coins are tradable. Note: Loyalty here dissolves faster than salt in brine.
 4. Victory Conditions:
-    - Fail to expend all cards before countdown ends → Eliminated.
-    - Exhaust cards with ≥3 Stars → Qualified.
-    - Card-exhausted players with Stars <3 may purchase deficit from qualified players using Coins until countdown expires.
+  - Fail to expend all cards before countdown ends → Eliminated.
+  - Exhaust cards with ≥3 Stars → Qualified.
+  - Card-exhausted players with Stars <3 may purchase deficit from qualified players using Coins until countdown expires.
 5. Final Ranking: Qualified players are ordered by remaining Coins—your final measure of worth.
 Critical Intel: The central hologram displays real-time global card consumption. Every play you make shrinks the collective survival window. Now... prove your vileness merits oxygen.

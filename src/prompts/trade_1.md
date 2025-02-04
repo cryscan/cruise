@@ -1,1 +1,1 @@
-Forgive the intrusion, Owner. (eyes shimmered with cascading data streams, reminiscent of moonlit tides) This will be the last round of your negotiation. System indicates less than 15 seconds remaining—strongly advise confirming transaction terms immediately.
+Forgive the intrusion, Owner. (Her eyes shimmered with cascading data streams, reminiscent of moonlit tides) This will be the last round of your negotiation. System indicates less than 15 seconds remaining—strongly advise confirming transaction terms immediately.

@@ -1,0 +1,38 @@
+integer ::= #"-?(0|[1-9][0-9]*)";
+number ::= #"-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?";
+string ::= #'"([^\\\\"\u0000-\u001f]|\\\\["\\\\bfnrt/]|\\\\u[0-9A-Fa-f]{4})*"';
+boolean ::= "true"|"false";
+null ::= "null";
+array ::= array_begin (json_value (comma json_value)*)? array_end;
+object ::= object_begin (string colon json_value (comma string colon json_value)*)? object_end;
+json_value ::= number|string|boolean|null|array|object;
+comma ::= #"[ 	
+
+]*,[ 	
+
+]*";
+colon ::= #"[ 	
+
+]*:[ 	
+
+]*";
+object_begin ::= #"\\{[ 	
+
+]*";
+object_end ::= #"[ 	
+
+]*\\}";
+array_begin ::= #"\\[[ 	
+
+]*";
+array_end ::= #"[ 	
+
+]*\\]";
+__json_0_0_json ::= object_begin '"star"' colon __json_0_0_json_star comma '"coin"' colon __json_0_0_json_coin comma '"rock"' colon __json_0_0_json_rock comma '"paper"' colon __json_0_0_json_paper comma '"scissors"' colon __json_0_0_json_scissors object_end;
+__json_0_0_json_scissors ::= integer;
+__json_0_0_json_paper ::= integer;
+__json_0_0_json_rock ::= integer;
+__json_0_0_json_coin ::= integer;
+__json_0_0_json_star ::= integer;
+
+start ::= __json_0_0_json '\n';
