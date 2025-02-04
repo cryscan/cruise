@@ -434,6 +434,23 @@ pub struct PlayerData {
     pub inventory: Inventory,
 }
 
+#[derive(Debug, Clone)]
+pub struct OpponentData {
+    pub name: Name,
+    pub star: u32,
+    pub card: u32,
+}
+
+impl From<PlayerData> for OpponentData {
+    fn from(value: PlayerData) -> Self {
+        Self {
+            name: value.name,
+            star: value.inventory.star,
+            card: value.inventory.num_cards(),
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Role {
     #[default]
@@ -448,13 +465,13 @@ impl Role {
         Self::System(entity)
     }
 
-    pub fn actor(entity: Entity, name: impl ToString) -> Self {
-        let name = name.to_string().trim().to_owned();
+    pub fn actor(entity: Entity, name: impl AsRef<str>) -> Self {
+        let name = name.as_ref().trim().to_owned();
         Self::Actor(entity, name)
     }
 
-    pub fn inner(entity: Entity, name: impl ToString) -> Self {
-        let name = name.to_string().trim().to_owned();
+    pub fn inner(entity: Entity, name: impl AsRef<str>) -> Self {
+        let name = name.as_ref().trim().to_owned();
         Self::Inner(entity, name)
     }
 }
@@ -465,7 +482,7 @@ impl Display for Role {
             Role::None => write!(f, ""),
             Role::System(_) => write!(f, "{SYSTEM_NAME}",),
             Role::Actor(_, name) => write!(f, "{name}"),
-            Role::Inner(_, name) => write!(f, "{name} (thinks)"),
+            Role::Inner(_, name) => write!(f, "{name} (inner voice)"),
         }
     }
 }
@@ -500,7 +517,7 @@ impl ChatRecord {
 
 impl Display for ChatRecord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.role, self.content)
+        write!(f, "{}: {}", self.role, self.content.trim())
     }
 }
 
@@ -520,7 +537,7 @@ pub trait Actor: ConditionalSend + Sync + 'static {
     /// Notify the actor about how many cards are there on the stage.
     fn notify<'a>(
         &'a mut self,
-        data: &'a PlayerData,
+        player: &'a PlayerData,
         state: &'a PublicState,
     ) -> BoxedFuture<'a, ()>;
     /// Provide feedback to the actor (due to erroneous actions).
@@ -528,33 +545,34 @@ pub trait Actor: ConditionalSend + Sync + 'static {
     /// Chat with the actor.
     fn chat<'a>(
         &'a mut self,
-        data: &'a PlayerData,
+        player: &'a PlayerData,
+        opponent: &'a OpponentData,
         history: &'a [ChatRecord],
         kind: ChatKind,
     ) -> BoxedFuture<'a, Vec<ChatRecord>>;
     /// Trade with another actor.
     fn trade<'a>(
         &'a mut self,
-        data: &'a PlayerData,
+        player: &'a PlayerData,
         history: &'a [ChatRecord],
     ) -> BoxedFuture<'a, Trade>;
     /// Accept the trade or not.
     fn accept_trade<'a>(
         &'a mut self,
-        data: &'a PlayerData,
+        player: &'a PlayerData,
         history: &'a [ChatRecord],
         state: TradeState<'a>,
     ) -> BoxedFuture<'a, bool>;
     /// Bet for the duel.
     fn bet<'a>(
         &'a mut self,
-        data: &'a PlayerData,
+        player: &'a PlayerData,
         history: &'a [ChatRecord],
     ) -> BoxedFuture<'a, Stake>;
     /// Accept the duel or not. If accepts, draw a card from the inventory.
     fn accept_duel<'a>(
         &'a mut self,
-        data: &'a PlayerData,
+        player: &'a PlayerData,
         history: &'a [ChatRecord],
         state: StakeState<'a>,
     ) -> BoxedFuture<'a, Option<Card>>;
@@ -566,19 +584,20 @@ pub struct DummyActor;
 impl Actor for DummyActor {
     fn notify<'a>(
         &'a mut self,
-        _data: &'a PlayerData,
+        _player: &'a PlayerData,
         _state: &'a PublicState,
     ) -> BoxedFuture<'a, ()> {
         Box::pin(async move {})
     }
 
-    fn feedback<'a>(&'a mut self, _data: &'a PlayerData, text: String) -> BoxedFuture<'a, ()> {
+    fn feedback<'a>(&'a mut self, _player: &'a PlayerData, text: String) -> BoxedFuture<'a, ()> {
         Box::pin(async move { panic!("{text}") })
     }
 
     fn chat<'a>(
         &'a mut self,
-        _data: &'a PlayerData,
+        _player: &'a PlayerData,
+        _opponent: &'a OpponentData,
         _history: &'a [ChatRecord],
         _kind: ChatKind,
     ) -> BoxedFuture<'a, Vec<ChatRecord>> {
@@ -587,14 +606,14 @@ impl Actor for DummyActor {
 
     fn trade<'a>(
         &'a mut self,
-        data: &'a PlayerData,
+        player: &'a PlayerData,
         _history: &'a [ChatRecord],
     ) -> BoxedFuture<'a, Trade> {
         Box::pin(async move {
             let deck = [
-                vec![Card::Rock; data.inventory.rock as usize],
-                vec![Card::Paper; data.inventory.paper as usize],
-                vec![Card::Scissors; data.inventory.scissors as usize],
+                vec![Card::Rock; player.inventory.rock as usize],
+                vec![Card::Paper; player.inventory.paper as usize],
+                vec![Card::Scissors; player.inventory.scissors as usize],
             ]
             .concat();
             let card = fastrand::choice(&deck).cloned();
@@ -618,7 +637,7 @@ impl Actor for DummyActor {
 
     fn accept_trade<'a>(
         &'a mut self,
-        _data: &'a PlayerData,
+        _player: &'a PlayerData,
         _history: &'a [ChatRecord],
         _state: TradeState<'a>,
     ) -> BoxedFuture<'a, bool> {
@@ -627,7 +646,7 @@ impl Actor for DummyActor {
 
     fn bet<'a>(
         &'a mut self,
-        _data: &'a PlayerData,
+        _player: &'a PlayerData,
         _history: &'a [ChatRecord],
     ) -> BoxedFuture<'a, Stake> {
         Box::pin(async move { Default::default() })
@@ -635,15 +654,15 @@ impl Actor for DummyActor {
 
     fn accept_duel<'a>(
         &'a mut self,
-        data: &'a PlayerData,
+        player: &'a PlayerData,
         _history: &'a [ChatRecord],
         _state: StakeState<'a>,
     ) -> BoxedFuture<'a, Option<Card>> {
         Box::pin(async move {
             let deck = [
-                vec![Card::Rock; data.inventory.rock as usize],
-                vec![Card::Paper; data.inventory.paper as usize],
-                vec![Card::Scissors; data.inventory.scissors as usize],
+                vec![Card::Rock; player.inventory.rock as usize],
+                vec![Card::Paper; player.inventory.paper as usize],
+                vec![Card::Scissors; player.inventory.scissors as usize],
             ]
             .concat();
             fastrand::choice(&deck).cloned()
@@ -654,12 +673,12 @@ impl Actor for DummyActor {
 pub async fn duel(
     state: PublicState,
     [a0, a1]: [Arc<Mutex<dyn Actor>>; 2],
-    [mut d0, mut d1]: [PlayerData; 2],
+    [mut p0, mut p1]: [PlayerData; 2],
 ) -> Result<[Inventory; 2]> {
     let (mut a0, mut a1) = join!(a0.lock(), a1.lock());
 
     // step 1: notify both players about public state
-    join!(a0.notify(&d0, &state), a1.notify(&d1, &state));
+    join!(a0.notify(&p0, &state), a1.notify(&p1, &state));
 
     // step 2: players chat before trade
     let mut history: Vec<ChatRecord> = vec![];
@@ -677,12 +696,16 @@ pub async fn duel(
     };
 
     for round in 0..NUM_CHAT_ROUNDS {
-        let observation = observe(&d0, &history);
-        let mut records = a0.chat(&d0, &observation, ChatKind::Trade(round)).await;
+        let h0 = observe(&p0, &history);
+        let q0 = p1.clone().into();
+        let r0 = round * 2;
+        let mut records = a0.chat(&p0, &q0, &h0, ChatKind::Trade(r0)).await;
         history.append(&mut records);
 
-        let observation = observe(&d1, &history);
-        let mut records = a1.chat(&d1, &observation, ChatKind::Trade(round)).await;
+        let h1 = observe(&p1, &history);
+        let q1 = p0.clone().into();
+        let r1 = r0 + 1;
+        let mut records = a1.chat(&p1, &q1, &h1, ChatKind::Trade(r1)).await;
         history.append(&mut records);
     }
 
@@ -697,11 +720,11 @@ pub async fn duel(
                     }
                     round += 1;
 
-                    let trade = a0.trade(&d0, &history).await;
-                    let inventory = match d0.inventory.split_trade(&trade) {
+                    let trade = a0.trade(&p0, &history).await;
+                    let inventory = match p0.inventory.split_trade(&trade) {
                         Ok(inventory) => inventory,
                         Err(err) => {
-                            a0.feedback(&d0, format!("Error: {err}")).await;
+                            a0.feedback(&p0, format!("Error: {err}")).await;
                             continue;
                         }
                     };
@@ -717,11 +740,11 @@ pub async fn duel(
                     }
                     round += 1;
 
-                    let trade = a1.trade(&d1, &history).await;
-                    let inventory = match d1.inventory.split_trade(&trade) {
+                    let trade = a1.trade(&p1, &history).await;
+                    let inventory = match p1.inventory.split_trade(&trade) {
                         Ok(inventory) => inventory,
                         Err(err) => {
-                            a1.feedback(&d1, format!("Error: {err}")).await;
+                            a1.feedback(&p1, format!("Error: {err}")).await;
                             continue;
                         }
                     };
@@ -734,15 +757,15 @@ pub async fn duel(
         };
 
         // success, update inventories
-        d0.inventory = x0;
-        d1.inventory = x1;
+        p0.inventory = x0;
+        p1.inventory = x1;
         (t0, t1)
     };
 
     // step 4: players agree on the trade
     match join!(
         a0.accept_trade(
-            &d0,
+            &p0,
             &history,
             TradeState {
                 this: &t0,
@@ -750,7 +773,7 @@ pub async fn duel(
             }
         ),
         a1.accept_trade(
-            &d1,
+            &p1,
             &history,
             TradeState {
                 this: &t1,
@@ -760,31 +783,35 @@ pub async fn duel(
     ) {
         (true, true) => {
             // players do reach an agreement, perform the trade
-            d0.inventory.apply_trade(&t1);
-            d1.inventory.apply_trade(&t0);
+            p0.inventory.apply_trade(&t1);
+            p1.inventory.apply_trade(&t0);
         }
         _ => {
             // players do not reach an agreement, rewind
-            d0.inventory.apply_trade(&t0);
-            d1.inventory.apply_trade(&t1);
+            p0.inventory.apply_trade(&t0);
+            p1.inventory.apply_trade(&t1);
         }
     }
 
     // check if we can proceed to duel
-    if [&d0, &d1].iter().any(|x| !x.inventory.can_duel()) {
-        return Ok([d0, d1].map(|x| x.inventory));
+    if [&p0, &p1].iter().any(|x| !x.inventory.can_duel()) {
+        return Ok([p0, p1].map(|x| x.inventory));
     }
 
     // step 5: player chat before duel
     let mut history: Vec<ChatRecord> = vec![];
 
     for round in 0..NUM_CHAT_ROUNDS {
-        let observation = observe(&d0, &history);
-        let mut records = a0.chat(&d0, &observation, ChatKind::Duel(round)).await;
+        let h0 = observe(&p0, &history);
+        let q0 = p1.clone().into();
+        let r0 = round * 2;
+        let mut records = a0.chat(&p0, &q0, &h0, ChatKind::Duel(r0)).await;
         history.append(&mut records);
 
-        let observation = observe(&d1, &history);
-        let mut records = a1.chat(&d1, &observation, ChatKind::Duel(round)).await;
+        let h1 = observe(&p1, &history);
+        let q1 = p0.clone().into();
+        let r1 = r0 + 1;
+        let mut records = a1.chat(&p1, &q1, &h1, ChatKind::Duel(r1)).await;
         history.append(&mut records);
     }
 
@@ -799,11 +826,11 @@ pub async fn duel(
                     }
                     round += 1;
 
-                    let stake = a0.bet(&d0, &history).await;
-                    let inventory = match d0.inventory.split_stake(&stake) {
+                    let stake = a0.bet(&p0, &history).await;
+                    let inventory = match p0.inventory.split_stake(&stake) {
                         Ok(inventory) => inventory,
                         Err(err) => {
-                            a0.feedback(&d0, format!("Error: {err}")).await;
+                            a0.feedback(&p0, format!("Error: {err}")).await;
                             continue;
                         }
                     };
@@ -819,11 +846,11 @@ pub async fn duel(
                     }
                     round += 1;
 
-                    let stake = a1.bet(&d1, &history).await;
-                    let inventory = match d1.inventory.split_stake(&stake) {
+                    let stake = a1.bet(&p1, &history).await;
+                    let inventory = match p1.inventory.split_stake(&stake) {
                         Ok(inventory) => inventory,
                         Err(err) => {
-                            a1.feedback(&d1, format!("Error: {err}")).await;
+                            a1.feedback(&p1, format!("Error: {err}")).await;
                             continue;
                         }
                     };
@@ -836,8 +863,8 @@ pub async fn duel(
         };
 
         // success, update inventories
-        d0.inventory = x0;
-        d1.inventory = x1;
+        p0.inventory = x0;
+        p1.inventory = x1;
         (s0, s1)
     };
 
@@ -851,7 +878,7 @@ pub async fn duel(
 
         let cards = join!(
             a0.accept_duel(
-                &d0,
+                &p0,
                 &history,
                 StakeState {
                     this: &s0,
@@ -859,7 +886,7 @@ pub async fn duel(
                 }
             ),
             a1.accept_duel(
-                &d1,
+                &p1,
                 &history,
                 StakeState {
                     this: &s1,
@@ -869,24 +896,24 @@ pub async fn duel(
         );
 
         if let (Some(lhs), Some(rhs)) = cards {
-            let x0 = match d0.inventory.split_duel(lhs) {
+            let x0 = match p0.inventory.split_duel(lhs) {
                 Ok(inventory) => inventory,
                 Err(err) => {
-                    a0.feedback(&d0, format!("Error: {err}")).await;
+                    a0.feedback(&p0, format!("Error: {err}")).await;
                     continue;
                 }
             };
-            let x1 = match d1.inventory.split_duel(rhs) {
+            let x1 = match p1.inventory.split_duel(rhs) {
                 Ok(inventory) => inventory,
                 Err(err) => {
-                    a1.feedback(&d1, format!("Error: {err}")).await;
+                    a1.feedback(&p1, format!("Error: {err}")).await;
                     continue;
                 }
             };
 
             // success, update inventories
-            d0.inventory = x0;
-            d1.inventory = x1;
+            p0.inventory = x0;
+            p1.inventory = x1;
         }
 
         break cards;
@@ -896,18 +923,18 @@ pub async fn duel(
         (Some(lhs), Some(rhs)) => match lhs.compare(rhs) {
             Some(index) => {
                 let stake = s0 + s1;
-                [&mut d0, &mut d1][index].inventory.apply_stake(&stake);
+                [&mut p0, &mut p1][index].inventory.apply_stake(&stake);
             }
             None => {
-                d0.inventory.apply_stake(&s0);
-                d1.inventory.apply_stake(&s1);
+                p0.inventory.apply_stake(&s0);
+                p1.inventory.apply_stake(&s1);
             }
         },
         _ => {
-            d0.inventory.apply_stake(&s0);
-            d1.inventory.apply_stake(&s1);
+            p0.inventory.apply_stake(&s0);
+            p1.inventory.apply_stake(&s1);
         }
     }
 
-    Ok([d0, d1].map(|x| x.inventory))
+    Ok([p0, p1].map(|x| x.inventory))
 }
