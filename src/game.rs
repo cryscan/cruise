@@ -90,13 +90,13 @@ impl Display for Card {
 pub struct Inventory {
     #[derivative(Default(value = "3"))]
     pub star: u32,
-    #[derivative(Default(value = "1000"))]
+    #[derivative(Default(value = "10"))]
     pub coin: u32,
-    #[derivative(Default(value = "3"))]
+    #[derivative(Default(value = "4"))]
     pub rock: u32,
-    #[derivative(Default(value = "3"))]
+    #[derivative(Default(value = "4"))]
     pub paper: u32,
-    #[derivative(Default(value = "3"))]
+    #[derivative(Default(value = "4"))]
     pub scissors: u32,
 }
 
@@ -879,7 +879,7 @@ pub async fn duel(
     }
 
     // step 5: player chat before duel
-    let mut history: Vec<ChatRecord> = vec![];
+    // let mut history: Vec<ChatRecord> = vec![];
 
     for round in 0..NUM_CHAT_ROUNDS {
         let h0 = observe(&p0, &history);

@@ -1,1 +1,1 @@
-Permit me to represent the draft contract for your trade. Please review it carefully and sign it if you find it proper. The veto protocol remains perpetually accessible, of course-I mean, you have rights to deny.
+Permit me to represent the draft contract for your trade. Please review it carefully and sign it if you find it proper. Of course, you have rights to deny as well.

@@ -4,7 +4,8 @@ use anyhow::Result;
 use async_std::sync::Mutex;
 use bevy::utils::BoxedFuture;
 use derivative::Derivative;
-use serde::{Deserialize, Serialize};
+use itertools::Itertools;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::game::{
     Actor, Card, ChatKind, ChatRecord, DuelResult, DummyActor, OpponentData, PlayerData,
@@ -72,6 +73,27 @@ impl CompletionResponse {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct ChooseRequest {
+    #[serde(rename = "input")]
+    pub prompt: String,
+    pub state: uuid::Uuid,
+    pub choices: Vec<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct ChooseResponse {
+    pub data: Vec<ChooseItem>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct ChooseItem {
+    pub choice: String,
+    pub index: usize,
+    pub rank: usize,
+    pub perplexity: f32,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Choice {
     pub index: u32,
     pub text: String,
@@ -130,17 +152,19 @@ impl LlmActor {
             .to_string()
     }
 
-    pub async fn call_llm(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+    pub async fn call_llm<T: DeserializeOwned>(
+        &self,
+        url: impl ToString,
+        request: &impl Serialize,
+    ) -> Result<T> {
         async_std::task::yield_now().await;
-        let response = ehttp::fetch_async(ehttp::Request::json(
-            "http://localhost:65530/api/oai/completions",
-            request,
-        )?)
-        .await
-        .map_err(|err| anyhow::anyhow!(err))?;
+        let response = ehttp::fetch_async(ehttp::Request::json(url, request)?)
+            .await
+            .map_err(|err| anyhow::anyhow!(err))?;
         Ok(response.json()?)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn chat_llm(
         &self,
         tag: impl AsRef<str>,
@@ -148,6 +172,7 @@ impl LlmActor {
         prompt: impl AsRef<str>,
         prefix: impl AsRef<str>,
         bnf_schema: impl AsRef<str>,
+        stop: &[impl AsRef<str>],
         player: Option<&PlayerData>,
         opponent: Option<&OpponentData>,
         sampler: Sampler,
@@ -159,7 +184,8 @@ impl LlmActor {
             let bnf_schema = bnf_schema.as_ref().into();
             let sampler = sampler.clone();
 
-            let mut stop = vec![
+            let mut stop = stop.iter().map(|x| x.as_ref().to_string()).collect_vec();
+            stop.extend([
                 "\n\n".into(),
                 format!("\n{}", ASSISTANT_NAME),
                 format!("{}:", ASSISTANT_NAME),
@@ -172,7 +198,7 @@ impl LlmActor {
                 "\n{".into(),
                 "\n[".into(),
                 "\n<".into(),
-            ];
+            ]);
             if let Some(player) = player {
                 stop.extend([
                     format!("\n{}", player.name),
@@ -199,7 +225,10 @@ impl LlmActor {
                 bnf_schema,
                 ..Default::default()
             };
-            let response = match self.call_llm(&request).await {
+            let response: CompletionResponse = match self
+                .call_llm("http://localhost:65530/api/oai/completions", &request)
+                .await
+            {
                 Ok(response) => response,
                 Err(err) => {
                     bevy::log::error!("{err}");
@@ -208,11 +237,59 @@ impl LlmActor {
             };
 
             let content = format!("{prefix}{}", response.model_text());
+            if content.is_empty() {
+                bevy::log::warn!("[{tag}][{role}] empty response");
+                continue;
+            }
+
             let record = ChatRecord::new(role, content);
+            // bevy::log::info!("[{tag}][prompt] {prompt}{prefix}");
             bevy::log::info!("[{tag}] {record}");
 
             self.llm.lock().await.push(LlmRecord { request, response });
             break record;
+        }
+    }
+
+    pub async fn choose_llm(
+        &self,
+        tag: impl AsRef<str>,
+        role: Role,
+        prompt: impl AsRef<str>,
+        choices: &[impl AsRef<str>],
+    ) -> Vec<String> {
+        loop {
+            let tag = tag.as_ref();
+            let prompt = prompt.as_ref().to_string();
+            let choices = choices
+                .iter()
+                .map(|choice| choice.as_ref().to_string())
+                .collect_vec();
+
+            let request = ChooseRequest {
+                prompt,
+                state: self.state,
+                choices,
+            };
+            let response: ChooseResponse = match self
+                .call_llm("http://localhost:65530/api/oai/chooses", &request)
+                .await
+            {
+                Ok(response) => response,
+                Err(err) => {
+                    bevy::log::error!("{err}");
+                    continue;
+                }
+            };
+
+            let choices = response
+                .data
+                .into_iter()
+                .map(|item| item.choice)
+                .collect_vec();
+            bevy::log::info!("[{tag}] {role}: {:?}", choices);
+
+            break choices;
         }
     }
 
@@ -262,8 +339,18 @@ impl LlmActor {
                 kind: SamplerKind::Typical,
                 ..Default::default()
             };
-            self.chat_llm("notify", role, prompt, "", "", Some(&player), None, sampler)
-                .await
+            self.chat_llm(
+                "notify",
+                role,
+                prompt,
+                "",
+                "",
+                &["\n"],
+                Some(player),
+                None,
+                sampler,
+            )
+            .await
         });
     }
 
@@ -316,8 +403,9 @@ impl LlmActor {
                 prompt,
                 "",
                 "",
-                Some(&player),
-                Some(&opponent),
+                &["\n"],
+                Some(player),
+                Some(opponent),
                 sampler,
             )
             .await
@@ -335,42 +423,34 @@ impl LlmActor {
         history: &'a [ChatRecord],
     ) -> Trade {
         loop {
+            let role = Role::actor(player.entity, &player.name);
             let prompt = format!(
                 include_str!("prompts/trade_3.md"),
                 player.name,
                 opponent.name,
                 Self::prompt_compact(history)
             );
-
+            let bnf_schema = include_str!("prompts/bnf_trade.txt");
             let sampler = Sampler {
                 top_p: 0.8,
                 presence_penalty: 0.0,
                 frequency_penalty: 0.0,
                 ..Default::default()
             };
-
-            let request = CompletionRequest {
-                prompt,
-                state: self.state,
-                stop: vec!["\n\n".into()],
-                sampler,
-                bnf_schema: include_str!("prompts/bnf_trade.txt").into(),
-                ..Default::default()
-            };
-            let response = match self.call_llm(&request).await {
-                Ok(response) => response,
-                Err(err) => {
-                    bevy::log::error!("{err}");
-                    continue;
-                }
-            };
-
-            let json = response.model_text();
-            bevy::log::info!("{}: {json}", player.name);
-
-            self.llm.lock().await.push(LlmRecord { request, response });
-
-            match serde_json::from_str::<Trade>(&json) {
+            let record = self
+                .chat_llm(
+                    "trade",
+                    role,
+                    prompt,
+                    "",
+                    bnf_schema,
+                    &["\n\n"],
+                    Some(player),
+                    Some(opponent),
+                    sampler,
+                )
+                .await;
+            match serde_json::from_str::<Trade>(&record.content) {
                 Ok(trade) => break trade.normalize(&player.inventory),
                 Err(err) => {
                     bevy::log::error!("{err}");
@@ -430,8 +510,9 @@ impl LlmActor {
                 prompt,
                 "",
                 "",
-                Some(&player),
-                Some(&opponent),
+                &["\n"],
+                Some(player),
+                Some(opponent),
                 sampler,
             )
             .await
@@ -450,15 +531,15 @@ impl LlmActor {
                 ..Default::default()
             };
             let prefixes = [
-                "So, my answer is \"",
-                "So I think I will give it a \"",
-                "Hmm... I have reviewed it and I guess I shall give it a \"",
-                "My verdict is \"",
-                "After consideration, my response is \"",
-                "The answer I provide is \"",
-                "Upon review, I decide on \"",
-                "My decision stands as \"",
-                "I give my response with a \"",
+                " So, my answer is \"",
+                " So I think I will give it a \"",
+                " Hmm... I have reviewed it and I guess I shall give it a \"",
+                " My verdict is \"",
+                " After consideration, my response is \"",
+                " The answer I provide is \"",
+                " Upon review, I decide on \"",
+                " My decision stands as \"",
+                " I give my response with a \"",
             ];
             self.chat_llm(
                 "accept_trade_confirm",
@@ -466,8 +547,9 @@ impl LlmActor {
                 prompt,
                 fastrand::choice(&prefixes).unwrap(),
                 "start ::= \"Yes\\\".\" | \"No\\\".\";",
-                Some(&player),
-                Some(&opponent),
+                &["\n"],
+                Some(player),
+                Some(opponent),
                 sampler,
             )
             .await
@@ -512,7 +594,8 @@ impl LlmActor {
                 prompt,
                 "",
                 "",
-                Some(&player),
+                &["\n"],
+                Some(player),
                 None,
                 sampler,
             )
@@ -543,8 +626,18 @@ impl LlmActor {
                 kind: SamplerKind::Typical,
                 ..Default::default()
             };
-            self.chat_llm("bet", role, prompt, "", "", Some(&player), None, sampler)
-                .await
+            self.chat_llm(
+                "bet",
+                role,
+                prompt,
+                "",
+                "",
+                &["\n"],
+                Some(player),
+                None,
+                sampler,
+            )
+            .await
         });
 
         self.dummy.bet(player, opponent, history).await
@@ -557,35 +650,17 @@ impl LlmActor {
         _history: &'a [ChatRecord],
         _state: StakeState<'a>,
     ) -> Option<Card> {
-        self.chat.push(ChatRecord::new(
+        let mut history = vec![];
+
+        let record = ChatRecord::new(
             Role::Assistant(player.entity),
-            include_str!("prompts/duel_1.md"),
-        ));
-
-        self.chat.push({
-            let role = Role::actor(player.entity, &player.name);
-            let prompt = Self::prompt_role(&self.chat, &role);
-            let sampler = Sampler {
-                kind: SamplerKind::Typical,
-                ..Default::default()
-            };
-            self.chat_llm(
-                "accept_duel",
-                role,
-                prompt,
-                "",
-                "",
-                Some(&player),
-                None,
-                sampler,
-            )
-            .await
-        });
-
-        self.chat.push(ChatRecord::new(
-            Role::System(player.entity),
-            include_str!("prompts/duel_2.md"),
-        ));
+            format!(
+                include_str!("prompts/duel_1.md"),
+                player.inventory.rock, player.inventory.paper, player.inventory.scissors
+            ),
+        );
+        // history.push(record.clone());
+        self.chat.push(record);
 
         let record = {
             let role = Role::actor(player.entity, &player.name);
@@ -594,61 +669,71 @@ impl LlmActor {
                 kind: SamplerKind::Typical,
                 ..Default::default()
             };
-            let prefixes = [
-                "Ok, the card I draw is \"",
-                "All right, the card I'm drawing is \"",
-                "Fine, the card I draw turns out to be \"",
-            ];
-
-            let deck = [
-                vec![Card::Rock; player.inventory.rock as usize],
-                vec![Card::Paper; player.inventory.paper as usize],
-                vec![Card::Scissors; player.inventory.scissors as usize],
-            ]
-            .concat();
-            let bnf_schema = match (
-                deck.contains(&Card::Rock),
-                deck.contains(&Card::Paper),
-                deck.contains(&Card::Scissors),
-            ) {
-                (true, true, true) => {
-                    "start ::= \"Rock\\\".\" | \"Paper\\\".\" | \"Scissors\\\".\";"
-                }
-                (true, true, false) => "start ::= \"Rock\\\".\" | \"Paper\\\".\";",
-                (true, false, true) => "start ::= \"Rock\\\".\" | \"Scissors\\\".\";",
-                (true, false, false) => "start ::= \"Rock\\\".\";",
-                (false, true, true) => "start ::= \"Paper\\\".\" | \"Scissors\\\".\";",
-                (false, true, false) => "start ::= \"Paper\\\".\";",
-                (false, false, true) => "start ::= \"Scissors\\\".\";",
-                (false, false, false) => unreachable!(),
-            };
-
             self.chat_llm(
-                "accept_duel_confirm",
+                "accept_duel_0",
                 role,
                 prompt,
-                fastrand::choice(&prefixes).unwrap(),
-                bnf_schema,
-                Some(&player),
-                Some(&opponent),
+                "",
+                "",
+                &["\n"],
+                Some(player),
+                None,
                 sampler,
             )
             .await
         };
+        history.push(record.clone());
+        self.chat.push(record);
 
-        let ans = match (
-            record.content.contains("Rock"),
-            record.content.contains("Paper"),
-            record.content.contains("Scissors"),
-        ) {
-            (true, _, _) => Some(Card::Rock),
-            (false, true, _) => Some(Card::Paper),
-            (false, false, true) => Some(Card::Scissors),
-            _ => None,
+        let card = {
+            let role = Role::actor(player.entity, &player.name);
+            let prompt = Self::prompt_compact(&history);
+            let prompt = format!(
+                include_str!("prompts/duel_2.md"),
+                opponent.name, player.name, prompt
+            );
+            let deck = [
+                vec![Card::Rock; player.inventory.rock.min(1) as usize],
+                vec![Card::Paper; player.inventory.paper.min(1) as usize],
+                vec![Card::Scissors; player.inventory.scissors.min(1) as usize],
+            ]
+            .concat();
+            let choices = deck.into_iter().map(|card| card.to_string()).collect_vec();
+            let choices = self
+                .choose_llm("accept_duel_1", role, prompt, &choices)
+                .await;
+            match choices.first().map(|x| x.as_ref()) {
+                Some("Rock") => Some(Card::Rock),
+                Some("Paper") => Some(Card::Paper),
+                Some("Scissors") => Some(Card::Scissors),
+                _ => None,
+            }
         };
 
-        self.chat.push(record);
-        ans
+        self.chat.push(ChatRecord::new(
+            Role::System(player.entity),
+            include_str!("prompts/duel_3.md"),
+        ));
+
+        if let Some(card) = card {
+            self.chat.push({
+                let role = Role::actor(player.entity, &player.name);
+                let prompts = [
+                    format!("Ok, the card I draw is \"{card}\"."),
+                    format!("All right, the card I'm drawing is \"{card}\"."),
+                    format!("Fine, the card I draw turns out to be \"{card}\"."),
+                ];
+                ChatRecord::new(role, fastrand::choice(&prompts).unwrap())
+            });
+        } else {
+            self.chat.push({
+                let role = Role::actor(player.entity, &player.name);
+                let prompts = [format!("I don't want to duel with {}.", opponent.name)];
+                ChatRecord::new(role, fastrand::choice(&prompts).unwrap())
+            });
+        }
+
+        card
     }
 
     pub async fn feedback_duel<'a>(&'a mut self, player: &'a PlayerData, result: DuelResult) {
@@ -675,54 +760,13 @@ impl LlmActor {
                 prompt,
                 "",
                 "",
-                Some(&player),
+                &["\n"],
+                Some(player),
                 None,
                 sampler,
             )
             .await
         });
-
-        // // AI responses
-        // self.chat.push({
-        //     let role = Role::Assistant(player.entity);
-        //     let prompt = Self::prompt_role(&self.chat, &role);
-        //     let sampler = Sampler {
-        //         kind: SamplerKind::Typical,
-        //         ..Default::default()
-        //     };
-        //     self.chat_llm(
-        //         format!("feedback_duel_1 ({})", player.name),
-        //         role,
-        //         prompt,
-        //         "",
-        //         "",
-        //         Some(&player),
-        //         None,
-        //         sampler,
-        //     )
-        //     .await
-        // });
-
-        // // player reflects
-        // self.chat.push({
-        //     let role = Role::actor(player.entity, &player.name);
-        //     let prompt = Self::prompt_role(&self.chat, &role);
-        //     let sampler = Sampler {
-        //         kind: SamplerKind::Typical,
-        //         ..Default::default()
-        //     };
-        //     self.chat_llm(
-        //         "feedback_duel_2",
-        //         role,
-        //         prompt,
-        //         "",
-        //         "",
-        //         Some(&player),
-        //         None,
-        //         sampler,
-        //     )
-        //     .await
-        // });
     }
 }
 
