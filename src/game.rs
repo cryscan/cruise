@@ -552,19 +552,26 @@ pub enum DuelResult {
     Lose,
 }
 
+#[allow(unused_variables)]
 pub trait Actor: ConditionalSend + Sync + 'static {
     /// Notify the actor about how many cards are there on the stage.
     fn notify<'a>(
         &'a mut self,
         player: &'a PlayerData,
         state: &'a PublicState,
-    ) -> BoxedFuture<'a, ()>;
+    ) -> BoxedFuture<'a, ()> {
+        Box::pin(async move {})
+    }
+
     /// Provide feedback to the actor (due to erroneous actions).
     fn feedback_error<'a>(
         &'a mut self,
         player: &'a PlayerData,
         text: String,
-    ) -> BoxedFuture<'a, ()>;
+    ) -> BoxedFuture<'a, ()> {
+        Box::pin(async move { panic!("{text}") })
+    }
+
     /// Chat with the actor.
     fn chat<'a>(
         &'a mut self,
@@ -572,85 +579,16 @@ pub trait Actor: ConditionalSend + Sync + 'static {
         opponent: &'a OpponentData,
         history: &'a [ChatRecord],
         kind: ChatKind,
-    ) -> BoxedFuture<'a, Vec<ChatRecord>>;
+    ) -> BoxedFuture<'a, Vec<ChatRecord>> {
+        Box::pin(async move { vec![] })
+    }
+
     /// Trade with another actor.
     fn trade<'a>(
         &'a mut self,
         player: &'a PlayerData,
         opponent: &'a OpponentData,
         history: &'a [ChatRecord],
-    ) -> BoxedFuture<'a, Trade>;
-    /// Accept the trade or not.
-    fn accept_trade<'a>(
-        &'a mut self,
-        player: &'a PlayerData,
-        opponent: &'a OpponentData,
-        history: &'a [ChatRecord],
-        state: TradeState<'a>,
-    ) -> BoxedFuture<'a, bool>;
-    /// Feedback on accepting the trade or not.
-    fn feedback_trade<'a>(
-        &'a mut self,
-        player: &'a PlayerData,
-        state: [bool; 2],
-    ) -> BoxedFuture<'a, ()>;
-    /// Bet for the duel.
-    fn bet<'a>(
-        &'a mut self,
-        player: &'a PlayerData,
-        opponent: &'a OpponentData,
-        history: &'a [ChatRecord],
-    ) -> BoxedFuture<'a, Stake>;
-    /// Accept the duel or not. If accepts, draw a card from the inventory.
-    fn accept_duel<'a>(
-        &'a mut self,
-        player: &'a PlayerData,
-        opponent: &'a OpponentData,
-        history: &'a [ChatRecord],
-        state: StakeState<'a>,
-    ) -> BoxedFuture<'a, Option<Card>>;
-    fn feedback_duel<'a>(
-        &'a mut self,
-        player: &'a PlayerData,
-        result: DuelResult,
-    ) -> BoxedFuture<'a, ()>;
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-pub struct DummyActor;
-
-impl Actor for DummyActor {
-    fn notify<'a>(
-        &'a mut self,
-        _player: &'a PlayerData,
-        _state: &'a PublicState,
-    ) -> BoxedFuture<'a, ()> {
-        Box::pin(async move {})
-    }
-
-    fn feedback_error<'a>(
-        &'a mut self,
-        _player: &'a PlayerData,
-        text: String,
-    ) -> BoxedFuture<'a, ()> {
-        Box::pin(async move { panic!("{text}") })
-    }
-
-    fn chat<'a>(
-        &'a mut self,
-        _player: &'a PlayerData,
-        _opponent: &'a OpponentData,
-        _history: &'a [ChatRecord],
-        _kind: ChatKind,
-    ) -> BoxedFuture<'a, Vec<ChatRecord>> {
-        Box::pin(async move { vec![] })
-    }
-
-    fn trade<'a>(
-        &'a mut self,
-        player: &'a PlayerData,
-        _opponent: &'a OpponentData,
-        _history: &'a [ChatRecord],
     ) -> BoxedFuture<'a, Trade> {
         Box::pin(async move {
             let deck = [
@@ -678,39 +616,43 @@ impl Actor for DummyActor {
         })
     }
 
+    /// Accept the trade or not.
     fn accept_trade<'a>(
         &'a mut self,
-        _player: &'a PlayerData,
-        _opponent: &'a OpponentData,
-        _history: &'a [ChatRecord],
-        _state: TradeState<'a>,
+        player: &'a PlayerData,
+        opponent: &'a OpponentData,
+        history: &'a [ChatRecord],
+        state: TradeState<'a>,
     ) -> BoxedFuture<'a, bool> {
         Box::pin(async move { true })
     }
 
+    /// Feedback on accepting the trade or not.
     fn feedback_trade<'a>(
         &'a mut self,
-        _player: &'a PlayerData,
-        _state: [bool; 2],
+        player: &'a PlayerData,
+        state: [bool; 2],
     ) -> BoxedFuture<'a, ()> {
         Box::pin(async move {})
     }
 
+    /// Bet for the duel.
     fn bet<'a>(
         &'a mut self,
-        _player: &'a PlayerData,
-        _opponent: &'a OpponentData,
-        _history: &'a [ChatRecord],
+        player: &'a PlayerData,
+        opponent: &'a OpponentData,
+        history: &'a [ChatRecord],
     ) -> BoxedFuture<'a, Stake> {
         Box::pin(async move { Default::default() })
     }
 
+    /// Accept the duel or not. If accepts, draw a card from the inventory.
     fn accept_duel<'a>(
         &'a mut self,
         player: &'a PlayerData,
-        _opponent: &'a OpponentData,
-        _history: &'a [ChatRecord],
-        _state: StakeState<'a>,
+        opponent: &'a OpponentData,
+        history: &'a [ChatRecord],
+        state: StakeState<'a>,
     ) -> BoxedFuture<'a, Option<Card>> {
         Box::pin(async move {
             let deck = [
@@ -723,14 +665,20 @@ impl Actor for DummyActor {
         })
     }
 
+    /// Feedback on the duel result.
     fn feedback_duel<'a>(
         &'a mut self,
-        _player: &'a PlayerData,
-        _result: DuelResult,
+        player: &'a PlayerData,
+        result: DuelResult,
     ) -> BoxedFuture<'a, ()> {
         Box::pin(async move {})
     }
 }
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct DummyActor;
+
+impl Actor for DummyActor {}
 
 pub async fn duel(
     state: PublicState,

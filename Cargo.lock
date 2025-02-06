@@ -421,6 +421,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy-async-ecs"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a40eadd421b642d1b9eb0037e9b9c352c63e085d9c998f8d9995568f9d050079"
+dependencies = [
+ "async-channel 2.3.1",
+ "bevy_app",
+ "bevy_core",
+ "bevy_ecs",
+ "bevy_hierarchy",
+ "bevy_utils",
+]
+
+[[package]]
 name = "bevy-inspector-egui"
 version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1923,6 +1937,7 @@ dependencies = [
  "anyhow",
  "async-std",
  "bevy",
+ "bevy-async-ecs",
  "bevy-inspector-egui",
  "derivative",
  "ehttp",
