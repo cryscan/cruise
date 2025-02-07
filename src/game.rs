@@ -290,6 +290,7 @@ impl Table {
 #[derive(Debug, Default, Clone, Resource, Reflect, Serialize, Deserialize)]
 #[reflect(Resource)]
 pub struct PublicState {
+    pub player: u32,
     pub rock: u32,
     pub paper: u32,
     pub scissors: u32,
@@ -319,6 +320,7 @@ fn update_public_state(mut state: ResMut<PublicState>, players: Query<&Inventory
         state.paper += inventory.paper;
         state.scissors += inventory.scissors;
     }
+    state.player = players.iter().len() as u32;
 }
 
 /// Find players that are not currently in match, and put them onto a table.

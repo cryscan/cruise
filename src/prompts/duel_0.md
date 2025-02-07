@@ -1,1 +1,0 @@
-The time has come to duel with {}, Owner. Spectral analysis indicates the subject currently maintains {} stars and {} cards in total. So, what card do you think your opponent might draw? Would it be a rock, a paper, or a scissors card? And why, my Owner?

@@ -1,0 +1,1 @@
+My dear {}, do you have any suggestions on our best strategy to win?

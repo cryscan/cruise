@@ -10,7 +10,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use crate::game::{
     Actor, Card, ChatKind, ChatRecord, DuelResult, DummyActor, OpponentData, PlayerData,
     PublicState, Role, Stake, StakeState, Trade, TradeState, ASSISTANT_NAME, NUM_CHAT_ROUNDS,
-    SYSTEM_NAME,
+    NUM_PLAYERS, SYSTEM_NAME,
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -294,64 +294,139 @@ impl LlmActor {
     }
 
     pub async fn notify<'a>(&'a mut self, player: &'a PlayerData, state: &'a PublicState) {
-        if self.chat.is_empty() {
-            self.chat.extend([
-                ChatRecord::new(
-                    Role::actor(player.entity, "Boss"),
-                    include_str!("prompts/op_boss.md"),
-                ),
-                ChatRecord::new(
-                    Role::Assistant(player.entity),
-                    format!(
-                        include_str!("prompts/op_system.md"),
-                        player.name.to_string()
-                    ),
-                ),
-                ChatRecord::new(
-                    Role::actor(player.entity, player.name.clone()),
-                    include_str!("prompts/op_me.md"),
-                ),
-            ]);
-        }
+        // if self.chat.is_empty() {
+        //     self.chat.extend([
+        //         ChatRecord::new(
+        //             Role::Assistant(player.entity),
+        //             format!(
+        //                 "",
+        //                 player.name.to_string()
+        //             ),
+        //         ),
+        //         ChatRecord::new(
+        //             Role::actor(player.entity, player.name.clone()),
+        //             "Ahh... I feel so dizzy... What happened to me? What's the situation right now?",
+        //         ),
+        //     ]);
+        // }
 
-        // system reports current state
-        self.chat.push(ChatRecord::new(
-            Role::Assistant(player.entity),
-            format!(
-                include_str!("prompts/notify_1.md"),
-                state.total_cards(),
-                state.rock,
-                state.paper,
-                state.scissors,
-                player.inventory.star,
-                player.inventory.coin,
-                player.inventory.rock,
-                player.inventory.paper,
-                player.inventory.scissors,
+        // // system reports current state
+        // self.chat.push(ChatRecord::new(
+        //     Role::Assistant(player.entity),
+        //     format!(
+        //         include_str!("prompts/notify_1.md"),
+        //         state.total_cards(),
+        //         state.rock,
+        //         state.paper,
+        //         state.scissors,
+        //         player.inventory.star,
+        //         player.inventory.coin,
+        //         player.inventory.rock,
+        //         player.inventory.paper,
+        //         player.inventory.scissors,
+        //     ),
+        // ));
+
+        // // player reflects
+        // self.chat.push({
+        //     let role = Role::actor(player.entity, &player.name);
+        //     let prompt = Self::prompt_role(&self.chat, &role);
+        //     let sampler = Sampler {
+        //         kind: SamplerKind::Typical,
+        //         ..Default::default()
+        //     };
+        //     self.chat_llm(
+        //         "notify",
+        //         role,
+        //         prompt,
+        //         "",
+        //         "",
+        //         &["\n"],
+        //         Some(player),
+        //         None,
+        //         sampler,
+        //     )
+        //     .await
+        // });
+
+        self.chat.clear();
+
+        self.chat.extend([
+            ChatRecord::new(
+                Role::Assistant(player.entity),
+                format!(
+                    include_str!("prompts/notify_0_ai.md"),
+                    player = player.name,
+                    ai = ASSISTANT_NAME
+                ),
             ),
-        ));
+            ChatRecord::new(
+                Role::actor(player.entity, &player.name),
+                "Ahh... I feel so dizzy... What happened to me? What's the situation right now?",
+            ),
+            ChatRecord::new(
+                Role::Assistant(player.entity),
+                format!(
+                    include_str!("prompts/notify_1_ai.md"),
+                    num_players = NUM_PLAYERS,
+                ),
+            ),
+            ChatRecord::new(
+                Role::actor(player.entity, &player.name),
+                include_str!("prompts/notify_2_user.md"),
+            ),
+            ChatRecord::new(
+                Role::Assistant(player.entity),
+                format!(
+                    include_str!("prompts/notify_3_ai.md"),
+                    star = player.inventory.star,
+                    coin = player.inventory.coin,
+                    num_cards = player.inventory.num_cards(),
+                    rock = player.inventory.rock,
+                    paper = player.inventory.paper,
+                    scissors = player.inventory.scissors,
+                    num_players = state.player,
+                    total_rock = state.rock,
+                    total_paper = state.paper,
+                    total_scissors = state.scissors,
+                ),
+            ),
+            ChatRecord::new(
+                Role::actor(player.entity, &player.name),
+                "Looks like it's just luck.",
+            ),
+            ChatRecord::new(
+                Role::Assistant(player.entity),
+                include_str!("prompts/notify_4_ai.md"),
+            ),
+            ChatRecord::new(
+                Role::actor(player.entity, &player.name),
+                format!(include_str!("prompts/notify_5_user.md"), ASSISTANT_NAME),
+            ),
+        ]);
 
-        // player reflects
+        // AI advices
         self.chat.push({
-            let role = Role::actor(player.entity, &player.name);
+            let role = Role::Assistant(player.entity);
             let prompt = Self::prompt_role(&self.chat, &role);
-            let sampler = Sampler {
-                kind: SamplerKind::Typical,
-                ..Default::default()
-            };
             self.chat_llm(
                 "notify",
                 role,
                 prompt,
+                "Let's think step by step, Owner. Based on your current status,",
                 "",
-                "",
-                &["\n"],
+                &["\n\n"],
                 Some(player),
                 None,
-                sampler,
+                Default::default(),
             )
             .await
         });
+
+        self.chat.push(ChatRecord::new(
+            Role::actor(player.entity, &player.name),
+            format!("I see, thank you, {ASSISTANT_NAME}."),
+        ));
     }
 
     pub async fn chat_trade<'a>(
@@ -566,11 +641,12 @@ impl LlmActor {
                 Role::Assistant(player.entity),
                 format!(
                     include_str!("prompts/trade_8_0.md"),
-                    player.inventory.star,
-                    player.inventory.coin,
-                    player.inventory.rock,
-                    player.inventory.paper,
-                    player.inventory.scissors
+                    star = player.inventory.star,
+                    coin = player.inventory.coin,
+                    num_cards = player.inventory.num_cards(),
+                    rock = player.inventory.rock,
+                    paper = player.inventory.paper,
+                    scissors = player.inventory.scissors,
                 ),
             ),
             _ => ChatRecord::new(
@@ -610,13 +686,37 @@ impl LlmActor {
         history: &'a [ChatRecord],
     ) -> Stake {
         // system reports opponent status
-        self.chat.push(ChatRecord::new(
-            Role::Assistant(player.entity),
-            format!(
-                include_str!("prompts/duel_0.md"),
-                opponent.name, opponent.star, opponent.card
+        self.chat.extend([
+            ChatRecord::new(
+                Role::Assistant(player.entity),
+                format!(
+                    include_str!("prompts/duel_0_ai.md"),
+                    opponent.name, opponent.star, opponent.card
+                ),
             ),
-        ));
+            ChatRecord::new(
+                Role::actor(player.entity, &player.name),
+                format!(include_str!("prompts/duel_1_user.md"), ASSISTANT_NAME),
+            ),
+        ]);
+
+        // AI advices
+        self.chat.push({
+            let role = Role::Assistant(player.entity);
+            let prompt = Self::prompt_role(&self.chat, &role);
+            self.chat_llm(
+                format!("bet_0 ({})", player.name),
+                role,
+                prompt,
+                "Let's analyze the situation.",
+                "",
+                &["\n\n"],
+                Some(player),
+                Some(opponent),
+                Default::default(),
+            )
+            .await
+        });
 
         // player reflects
         self.chat.push({
@@ -627,7 +727,7 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
-                "bet",
+                "bet_1",
                 role,
                 prompt,
                 "",
@@ -655,8 +755,11 @@ impl LlmActor {
         let record = ChatRecord::new(
             Role::Assistant(player.entity),
             format!(
-                include_str!("prompts/duel_1.md"),
-                player.inventory.rock, player.inventory.paper, player.inventory.scissors
+                include_str!("prompts/duel_2.md"),
+                num_cards = player.inventory.num_cards(),
+                rock = player.inventory.rock,
+                paper = player.inventory.paper,
+                scissors = player.inventory.scissors
             ),
         );
         // history.push(record.clone());
@@ -689,7 +792,7 @@ impl LlmActor {
             let role = Role::actor(player.entity, &player.name);
             let prompt = Self::prompt_compact(&history);
             let prompt = format!(
-                include_str!("prompts/duel_2.md"),
+                include_str!("prompts/duel_3.md"),
                 opponent.name, player.name, prompt
             );
             let deck = [
@@ -711,8 +814,8 @@ impl LlmActor {
         };
 
         self.chat.push(ChatRecord::new(
-            Role::System(player.entity),
-            include_str!("prompts/duel_3.md"),
+            Role::Assistant(player.entity),
+            include_str!("prompts/duel_4.md"),
         ));
 
         if let Some(card) = card {

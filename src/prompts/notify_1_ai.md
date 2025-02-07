@@ -1,0 +1,1 @@
+Owner, it seems that you are trapped on the cruise ship **Ark of Destinies**. You are forced to play with {num_players} other players a rock-paper-scissors card game. Check your pockets, you should find something.

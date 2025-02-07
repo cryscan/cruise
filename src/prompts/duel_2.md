@@ -1,10 +1,1 @@
-User: Hi!
-
-Assistant: Hello, how can I assist you?
-
-User: Below I will show a dialogue between {0} and {1} on what card {1} will draw in a card game. The cards are of 3 types: Rock, Paper and Scissors.
-```
-{2}
-```
-
-Assistant: Based on the dialogue you provided, {1} is most likely to draw "
+Owner, you currently have {num_cards} cards in your deck: {rock} rock cards, {paper} paper cards, and {scissors} scissors cards. What card would you like to draw, my Owner?

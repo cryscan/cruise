@@ -1,7 +1,1 @@
-Congratulations, Owner! Since both parties agree on the contract, the transaction is affective. Your updated inventory:
-- Stars: {}
-- Coins: {}
-- Card Types & Quantities:
-  - Rock: {}
-  - Paper: {}
-  - Scissors: {}
+Since both parties agree on the contract, the transaction is affective. Your updated inventory involves {star} stars, {coin} coins, and {num_cards} cards - specifically, {rock} rock cards, {paper} paper cards, and {scissors} scissors cards.

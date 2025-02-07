@@ -1,0 +1,1 @@
+You're finally conscious, my Owner, {player}. Designated as your tactical coordination terminal, you may call me '{ai}'. Don't worry, our conversation is opaque to others around here. Your survival level has dropped down to 12% and I am here to help you survive the severity.

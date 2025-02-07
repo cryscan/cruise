@@ -1,0 +1,1 @@
+What card do you think my opponent would draw, my omniscient {}?

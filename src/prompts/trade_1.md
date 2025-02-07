@@ -1,1 +1,1 @@
-Forgive the intrusion, Owner. This will be the last round of your negotiation. System indicates less than 15 seconds remaining—strongly advise confirming transaction terms immediately.
+Forgive the intrusion, Owner. This will be the last round of your negotiation. System indicates less than 15 seconds remaining — strongly advise confirming transaction terms immediately.
