@@ -17,7 +17,7 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::llm::LlmActor;
+use crate::{llm::LlmActor, ServerUrl};
 
 pub const NUM_PLAYERS: usize = 16;
 pub const MIN_MATCH_PLAYERS: usize = 2;
@@ -302,12 +302,13 @@ impl PublicState {
     }
 }
 
-fn setup_scene(mut commands: Commands) {
+fn setup_scene(mut commands: Commands, server_url: Res<ServerUrl>) {
     let names = NAMES.split("\n").map(|x| x.trim()).collect_vec();
+    let url = server_url.0.clone();
     commands.spawn_batch((0..NUM_PLAYERS).map(move |index| {
         (
             Name::new(names[index]),
-            Player::new(LlmActor::new()),
+            Player::new(LlmActor::new(url.clone())),
             Inventory::default(),
         )
     }));

@@ -107,15 +107,21 @@ pub struct LlmRecord {
 
 #[derive(Debug, Default, Clone)]
 pub struct LlmActor {
+    pub url: String,
     pub state: uuid::Uuid,
+
     pub llm: Arc<Mutex<Vec<LlmRecord>>>,
     pub chat: Vec<ChatRecord>,
     pub dummy: DummyActor,
 }
 
 impl LlmActor {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(url: impl ToString) -> Self {
+        let url = url.to_string();
+        Self {
+            url,
+            ..Default::default()
+        }
     }
 
     pub fn prompt_story(records: &[ChatRecord]) -> String {
@@ -167,7 +173,7 @@ impl LlmActor {
     #[allow(clippy::too_many_arguments)]
     pub async fn chat_llm(
         &self,
-        tag: impl AsRef<str>,
+        head: impl AsRef<str>,
         role: Role,
         prompt: impl AsRef<str>,
         prefix: impl AsRef<str>,
@@ -178,7 +184,7 @@ impl LlmActor {
         sampler: Sampler,
     ) -> ChatRecord {
         loop {
-            let tag = tag.as_ref();
+            let head = head.as_ref();
             let prompt = prompt.as_ref();
             let prefix = prefix.as_ref();
             let bnf_schema = bnf_schema.as_ref().into();
@@ -226,7 +232,7 @@ impl LlmActor {
                 ..Default::default()
             };
             let response: CompletionResponse = match self
-                .call_llm("http://localhost:65530/api/oai/completions", &request)
+                .call_llm(format!("{}/api/oai/completions", self.url), &request)
                 .await
             {
                 Ok(response) => response,
@@ -238,13 +244,13 @@ impl LlmActor {
 
             let content = format!("{prefix}{}", response.model_text());
             if content.is_empty() {
-                bevy::log::warn!("[{tag}][{role}] empty response");
+                bevy::log::warn!("[{role}]{head} empty response");
                 continue;
             }
 
             let record = ChatRecord::new(role, content);
-            // bevy::log::info!("[{tag}][prompt] {prompt}{prefix}");
-            bevy::log::info!("[{tag}] {record}");
+            // bevy::log::info!("[{head}][prompt] {prompt}{prefix}");
+            bevy::log::info!("{head} {record}");
 
             self.llm.lock().await.push(LlmRecord { request, response });
             break record;
@@ -253,13 +259,13 @@ impl LlmActor {
 
     pub async fn choose_llm(
         &self,
-        tag: impl AsRef<str>,
+        head: impl AsRef<str>,
         role: Role,
         prompt: impl AsRef<str>,
         choices: &[impl AsRef<str>],
     ) -> Vec<String> {
         loop {
-            let tag = tag.as_ref();
+            let head = head.as_ref();
             let prompt = prompt.as_ref().to_string();
             let choices = choices
                 .iter()
@@ -272,7 +278,7 @@ impl LlmActor {
                 choices,
             };
             let response: ChooseResponse = match self
-                .call_llm("http://localhost:65530/api/oai/chooses", &request)
+                .call_llm(format!("{}/api/oai/chooses", self.url), &request)
                 .await
             {
                 Ok(response) => response,
@@ -287,68 +293,13 @@ impl LlmActor {
                 .into_iter()
                 .map(|item| item.choice)
                 .collect_vec();
-            bevy::log::info!("[{tag}] {role}: {:?}", choices);
+            bevy::log::info!("{head} {role}: {:?}", choices);
 
             break choices;
         }
     }
 
     pub async fn notify<'a>(&'a mut self, player: &'a PlayerData, state: &'a PublicState) {
-        // if self.chat.is_empty() {
-        //     self.chat.extend([
-        //         ChatRecord::new(
-        //             Role::Assistant(player.entity),
-        //             format!(
-        //                 "",
-        //                 player.name.to_string()
-        //             ),
-        //         ),
-        //         ChatRecord::new(
-        //             Role::actor(player.entity, player.name.clone()),
-        //             "Ahh... I feel so dizzy... What happened to me? What's the situation right now?",
-        //         ),
-        //     ]);
-        // }
-
-        // // system reports current state
-        // self.chat.push(ChatRecord::new(
-        //     Role::Assistant(player.entity),
-        //     format!(
-        //         include_str!("prompts/notify_1.md"),
-        //         state.total_cards(),
-        //         state.rock,
-        //         state.paper,
-        //         state.scissors,
-        //         player.inventory.star,
-        //         player.inventory.coin,
-        //         player.inventory.rock,
-        //         player.inventory.paper,
-        //         player.inventory.scissors,
-        //     ),
-        // ));
-
-        // // player reflects
-        // self.chat.push({
-        //     let role = Role::actor(player.entity, &player.name);
-        //     let prompt = Self::prompt_role(&self.chat, &role);
-        //     let sampler = Sampler {
-        //         kind: SamplerKind::Typical,
-        //         ..Default::default()
-        //     };
-        //     self.chat_llm(
-        //         "notify",
-        //         role,
-        //         prompt,
-        //         "",
-        //         "",
-        //         &["\n"],
-        //         Some(player),
-        //         None,
-        //         sampler,
-        //     )
-        //     .await
-        // });
-
         self.chat.clear();
 
         self.chat.extend([
@@ -410,7 +361,7 @@ impl LlmActor {
             let role = Role::Assistant(player.entity);
             let prompt = Self::prompt_role(&self.chat, &role);
             self.chat_llm(
-                "notify",
+                "[notify]",
                 role,
                 prompt,
                 "Let's think step by step, Owner. Based on your current status,",
@@ -473,7 +424,7 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
-                format!("chat_trade_{round}"),
+                format!("[chat_trade][{round}]"),
                 role,
                 prompt,
                 "",
@@ -514,7 +465,7 @@ impl LlmActor {
             };
             let record = self
                 .chat_llm(
-                    "trade",
+                    "[trade]",
                     role,
                     prompt,
                     "",
@@ -580,7 +531,7 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
-                "accept_trade",
+                "[trade][accept]",
                 role,
                 prompt,
                 "",
@@ -617,7 +568,7 @@ impl LlmActor {
                 " I give my response with a \"",
             ];
             self.chat_llm(
-                "accept_trade_confirm",
+                "[trade][accept][confirm]",
                 role,
                 prompt,
                 fastrand::choice(&prefixes).unwrap(),
@@ -665,7 +616,7 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
-                "feedback_trade",
+                "[trade][feedback]",
                 role,
                 prompt,
                 "",
@@ -705,7 +656,7 @@ impl LlmActor {
             let role = Role::Assistant(player.entity);
             let prompt = Self::prompt_role(&self.chat, &role);
             self.chat_llm(
-                format!("bet_0 ({})", player.name),
+                format!("[bet][0][{}]", player.name),
                 role,
                 prompt,
                 "Let's analyze the situation.",
@@ -727,7 +678,7 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
-                "bet_1",
+                "[bet][1]",
                 role,
                 prompt,
                 "",
@@ -773,7 +724,7 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
-                "accept_duel_0",
+                "[duel][accept][0]",
                 role,
                 prompt,
                 "",
@@ -803,7 +754,7 @@ impl LlmActor {
             .concat();
             let choices = deck.into_iter().map(|card| card.to_string()).collect_vec();
             let choices = self
-                .choose_llm("accept_duel_1", role, prompt, &choices)
+                .choose_llm("[duel][accept][1]", role, prompt, &choices)
                 .await;
             match choices.first().map(|x| x.as_ref()) {
                 Some("Rock") => Some(Card::Rock),
@@ -858,7 +809,7 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
-                "feedback_duel_0",
+                "[duel][feedback]",
                 role,
                 prompt,
                 "",

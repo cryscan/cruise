@@ -9,6 +9,7 @@ async-std = "1.13"
 bevy = "0.15"
 bevy-async-ecs = "0.7"
 bevy-inspector-egui = "0.29"
+clap = { version = "4", features = ["derive"] }
 derivative = "2.2.0"
 ehttp = { version = "0.5", features = ["json", "native-async"] }
 fastrand = "2.3"
