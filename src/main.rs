@@ -24,6 +24,7 @@ fn main() {
     App::new()
         .add_plugins((DefaultPlugins, AsyncEcsPlugin, WorldInspectorPlugin::new()))
         .add_plugins(GamePlugin)
+        .register_type::<ServerUrl>()
         .insert_resource(ServerUrl(args.url))
         .run();
 }

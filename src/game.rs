@@ -7,6 +7,7 @@ use std::{
 use anyhow::{bail, Result};
 use async_std::{sync::Mutex, task::block_on};
 use bevy::{
+    ecs::query::QueryData,
     prelude::*,
     tasks::{futures_lite::future, IoTaskPool, Task},
     utils::{BoxedFuture, ConditionalSend},
@@ -41,13 +42,7 @@ impl Plugin for GamePlugin {
             .add_systems(Startup, setup_scene)
             .add_systems(
                 Update,
-                (
-                    update_public_state,
-                    match_players,
-                    remove_players,
-                    start_duel,
-                    poll_duel,
-                ),
+                (update_public_state, match_players, start_duel, poll_duel),
             );
     }
 }
@@ -101,12 +96,9 @@ pub struct Inventory {
     pub scissors: usize,
 }
 
-#[derive(
-    Debug, Derivative, Clone, Copy, Deref, DerefMut, Component, Reflect, Serialize, Deserialize,
-)]
-#[derivative(Default)]
+#[derive(Debug, Default, Clone, Copy, Deref, DerefMut, Component, Reflect)]
 #[reflect(Component)]
-pub struct CountDown(#[derivative(Default(value = "MAX_ROUNDS"))] pub usize);
+pub struct CountDown(pub usize);
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Trade {
@@ -310,6 +302,16 @@ impl PublicState {
     }
 }
 
+#[derive(QueryData, Clone, Copy)]
+#[query_data(derive(Debug))]
+struct PlayerQuery {
+    entity: Entity,
+    player: &'static Player,
+    name: &'static Name,
+    inventory: &'static Inventory,
+    count_down: &'static CountDown,
+}
+
 fn setup_scene(mut commands: Commands, server_url: Res<ServerUrl>) {
     let names = NAMES.split("\n").map(|x| x.trim()).collect_vec();
     let url = server_url.0.clone();
@@ -318,6 +320,7 @@ fn setup_scene(mut commands: Commands, server_url: Res<ServerUrl>) {
             Name::new(names[index]),
             Player::new(LlmActor::new(url.clone())),
             Inventory::default(),
+            CountDown(MAX_ROUNDS),
         )
     }));
 }
@@ -333,13 +336,9 @@ fn update_public_state(mut state: ResMut<PublicState>, players: Query<&Inventory
 }
 
 /// Find players that are not currently in match, and put them onto a table.
-fn match_players(
-    mut commands: Commands,
-    mut players: Query<(Entity, &Name, &Inventory), With<Player>>,
-    tables: Query<&Table, Without<Player>>,
-) {
+fn match_players(mut commands: Commands, players: Query<PlayerQuery>, tables: Query<&Table>) {
     let mut total_cards = 0;
-    for (_, _, inventory) in &players {
+    for PlayerQueryItem { inventory, .. } in &players {
         total_cards += inventory.rock;
         total_cards += inventory.paper;
         total_cards += inventory.scissors;
@@ -350,8 +349,8 @@ fn match_players(
     }
 
     let mut players = players
-        .iter_mut()
-        .filter(|(entity, _, _)| {
+        .iter()
+        .filter(|PlayerQueryItem { entity, .. }| {
             tables
                 .iter()
                 .map(|table| table.0)
@@ -360,8 +359,9 @@ fn match_players(
                 .contains(entity)
                 .not()
         })
-        .filter(|(_, _, inventory)| inventory.is_alive())
-        .filter(|(_, _, inventory)| !inventory.is_safe())
+        .filter(|PlayerQueryItem { inventory, .. }| inventory.is_alive())
+        .filter(|PlayerQueryItem { inventory, .. }| !inventory.is_safe())
+        .filter(|PlayerQueryItem { count_down, .. }| count_down.0 > 0)
         .collect_vec();
 
     if players.len() < MIN_MATCH_PLAYERS {
@@ -371,12 +371,13 @@ fn match_players(
     fastrand::shuffle(&mut players);
 
     for (x, y) in players.into_iter().tuples() {
-        let table = Table::new(x.0, y.0);
-        let name = Name::new(format!("Table ({}, {})", x.1, y.1));
+        let table = Table::new(x.entity, y.entity);
+        let name = Name::new(format!("Table ({}, {})", x.name, y.name));
         commands.spawn((table, name));
     }
 }
 
+#[allow(unused)]
 fn remove_players(
     mut commands: Commands,
     players: Query<(Entity, &Name, &Inventory), With<Player>>,
@@ -394,12 +395,12 @@ fn remove_players(
 }
 
 #[derive(Debug, Component)]
-struct DuelTask(Task<Result<[Inventory; 2]>>);
+pub struct DuelTask(pub Task<Result<[Inventory; 2]>>);
 
 fn start_duel(
     mut commands: Commands,
     state: Res<PublicState>,
-    players: Query<(Entity, &Name, &Inventory, &Player)>,
+    players: Query<PlayerQuery>,
     tables: Query<(Entity, &Table), Without<DuelTask>>,
 ) {
     let thread_pool = IoTaskPool::get();
@@ -407,23 +408,15 @@ fn start_duel(
         let (Ok(x), Ok(y)) = (players.get(table[0]), players.get(table[1])) else {
             continue;
         };
-        assert!(x.2.is_alive());
-        assert!(y.2.is_alive());
+        assert!(x.inventory.is_alive());
+        assert!(y.inventory.is_alive());
+
+        assert!(x.count_down.0 > 0);
+        assert!(y.count_down.0 > 0);
 
         let state = state.clone();
-        let actors = [x.3.actor.clone(), y.3.actor.clone()];
-        let data = [
-            PlayerData {
-                entity: x.0,
-                name: x.1.clone(),
-                inventory: x.2.clone(),
-            },
-            PlayerData {
-                entity: y.0,
-                name: y.1.clone(),
-                inventory: y.2.clone(),
-            },
-        ];
+        let actors = [x.player.actor.clone(), y.player.actor.clone()];
+        let data = [x.into(), y.into()];
         let task = thread_pool.spawn(duel(state, actors, data));
         commands.entity(entity).insert(DuelTask(task));
     }
@@ -431,7 +424,7 @@ fn start_duel(
 
 fn poll_duel(
     mut commands: Commands,
-    mut players: Query<&mut Inventory, With<Player>>,
+    mut players: Query<(&mut Inventory, &mut CountDown), With<Player>>,
     mut tables: Query<(Entity, &Table, &mut DuelTask), Without<Player>>,
 ) {
     for (entity, table, mut task) in &mut tables {
@@ -439,10 +432,12 @@ fn poll_duel(
             match result {
                 Ok([m, n]) => {
                     if let Ok(mut x) = players.get_mut(table[0]) {
-                        *x = m;
+                        *x.0 = m;
+                        x.1 .0 -= 1;
                     }
                     if let Ok(mut y) = players.get_mut(table[1]) {
-                        *y = n;
+                        *y.0 = n;
+                        y.1 .0 -= 1;
                     }
                 }
                 Err(err) => bevy::log::warn!("duel error: {err}"),
@@ -457,6 +452,26 @@ pub struct PlayerData {
     pub entity: Entity,
     pub name: Name,
     pub inventory: Inventory,
+    pub count_down: CountDown,
+}
+
+impl<'a> From<PlayerQueryItem<'a>> for PlayerData {
+    fn from(
+        PlayerQueryItem {
+            entity,
+            name,
+            inventory,
+            count_down,
+            ..
+        }: PlayerQueryItem<'a>,
+    ) -> Self {
+        Self {
+            entity,
+            name: name.to_owned(),
+            inventory: inventory.to_owned(),
+            count_down: count_down.to_owned(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
