@@ -771,9 +771,9 @@ impl LlmActor {
                 opponent.name, player.name, prompt
             );
             let deck = [
-                vec![Card::Rock; player.inventory.rock.min(1) as usize],
-                vec![Card::Paper; player.inventory.paper.min(1) as usize],
-                vec![Card::Scissors; player.inventory.scissors.min(1) as usize],
+                vec![Card::Rock; player.inventory.rock.min(1)],
+                vec![Card::Paper; player.inventory.paper.min(1)],
+                vec![Card::Scissors; player.inventory.scissors.min(1)],
             ]
             .concat();
             let choices = deck.into_iter().map(|card| card.to_string()).collect_vec();

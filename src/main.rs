@@ -5,7 +5,6 @@ use clap::Parser;
 
 use crate::game::GamePlugin;
 
-pub mod blueprint;
 pub mod game;
 pub mod llm;
 

@@ -21,6 +21,7 @@ use crate::{llm::LlmActor, ServerUrl};
 
 pub const NUM_PLAYERS: usize = 16;
 pub const MIN_MATCH_PLAYERS: usize = 2;
+pub const MAX_ROUNDS: usize = 6;
 pub const NUM_CHAT_ROUNDS: usize = 4;
 pub const MAX_TRAIL_ROUNDS: usize = 3;
 
@@ -89,24 +90,31 @@ impl Display for Card {
 #[reflect(Component)]
 pub struct Inventory {
     #[derivative(Default(value = "3"))]
-    pub star: u32,
+    pub star: usize,
     #[derivative(Default(value = "10"))]
-    pub coin: u32,
+    pub coin: usize,
     #[derivative(Default(value = "4"))]
-    pub rock: u32,
+    pub rock: usize,
     #[derivative(Default(value = "4"))]
-    pub paper: u32,
+    pub paper: usize,
     #[derivative(Default(value = "4"))]
-    pub scissors: u32,
+    pub scissors: usize,
 }
+
+#[derive(
+    Debug, Derivative, Clone, Copy, Deref, DerefMut, Component, Reflect, Serialize, Deserialize,
+)]
+#[derivative(Default)]
+#[reflect(Component)]
+pub struct CountDown(#[derivative(Default(value = "MAX_ROUNDS"))] pub usize);
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Trade {
-    pub star: u32,
-    pub coin: u32,
-    pub rock: u32,
-    pub paper: u32,
-    pub scissors: u32,
+    pub star: usize,
+    pub coin: usize,
+    pub rock: usize,
+    pub paper: usize,
+    pub scissors: usize,
 }
 
 impl Trade {
@@ -125,23 +133,23 @@ impl Trade {
 #[derive(Debug, Clone, Copy, Error)]
 pub enum TradeError {
     #[error("cannot take out {1} star(s) since you only have {0}")]
-    Star(u32, u32),
+    Star(usize, usize),
     #[error("cannot take out {1} coin(s) since you only have {0}")]
-    Coin(u32, u32),
+    Coin(usize, usize),
     #[error("cannot take out {1} rock card(s) since you only have {0}")]
-    Rock(u32, u32),
+    Rock(usize, usize),
     #[error("cannot take out {1} paper card(s) since you only have {0}")]
-    Paper(u32, u32),
+    Paper(usize, usize),
     #[error("cannot take out {1} scissors card(s) since you only have {0}")]
-    Scissors(u32, u32),
+    Scissors(usize, usize),
 }
 
 #[derive(Debug, Derivative, Clone, Serialize, Deserialize)]
 #[derivative(Default)]
 pub struct Stake {
     #[derivative(Default(value = "1"))]
-    pub star: u32,
-    pub coin: u32,
+    pub star: usize,
+    pub coin: usize,
 }
 
 impl Stake {
@@ -168,9 +176,9 @@ impl Add<Stake> for Stake {
 #[derive(Debug, Clone, Copy, Error)]
 pub enum StakeError {
     #[error("cannot take out {1} star(s) since you only have {0} star(s)")]
-    Star(u32, u32),
+    Star(usize, usize),
     #[error("cannot take out {1} coin(s) since you only have {0} coin(s)")]
-    Coin(u32, u32),
+    Coin(usize, usize),
 }
 
 #[derive(Debug, Clone, Copy, Error)]
@@ -184,7 +192,7 @@ pub enum DuelError {
 }
 
 impl Inventory {
-    pub fn num_cards(&self) -> u32 {
+    pub fn num_cards(&self) -> usize {
         self.rock + self.paper + self.scissors
     }
 
@@ -290,14 +298,14 @@ impl Table {
 #[derive(Debug, Default, Clone, Resource, Reflect, Serialize, Deserialize)]
 #[reflect(Resource)]
 pub struct PublicState {
-    pub player: u32,
-    pub rock: u32,
-    pub paper: u32,
-    pub scissors: u32,
+    pub player: usize,
+    pub rock: usize,
+    pub paper: usize,
+    pub scissors: usize,
 }
 
 impl PublicState {
-    pub fn total_cards(&self) -> u32 {
+    pub fn total_cards(&self) -> usize {
         self.rock + self.paper + self.scissors
     }
 }
@@ -321,7 +329,7 @@ fn update_public_state(mut state: ResMut<PublicState>, players: Query<&Inventory
         state.paper += inventory.paper;
         state.scissors += inventory.scissors;
     }
-    state.player = players.iter().len() as u32;
+    state.player = players.iter().len();
 }
 
 /// Find players that are not currently in match, and put them onto a table.
@@ -454,8 +462,8 @@ pub struct PlayerData {
 #[derive(Debug, Clone)]
 pub struct OpponentData {
     pub name: Name,
-    pub star: u32,
-    pub card: u32,
+    pub star: usize,
+    pub card: usize,
 }
 
 impl From<PlayerData> for OpponentData {
@@ -595,9 +603,9 @@ pub trait Actor: ConditionalSend + Sync + 'static {
     ) -> BoxedFuture<'a, Trade> {
         Box::pin(async move {
             let deck = [
-                vec![Card::Rock; player.inventory.rock as usize],
-                vec![Card::Paper; player.inventory.paper as usize],
-                vec![Card::Scissors; player.inventory.scissors as usize],
+                vec![Card::Rock; player.inventory.rock],
+                vec![Card::Paper; player.inventory.paper],
+                vec![Card::Scissors; player.inventory.scissors],
             ]
             .concat();
             let card = fastrand::choice(&deck).cloned();
@@ -659,9 +667,9 @@ pub trait Actor: ConditionalSend + Sync + 'static {
     ) -> BoxedFuture<'a, Option<Card>> {
         Box::pin(async move {
             let deck = [
-                vec![Card::Rock; player.inventory.rock as usize],
-                vec![Card::Paper; player.inventory.paper as usize],
-                vec![Card::Scissors; player.inventory.scissors as usize],
+                vec![Card::Rock; player.inventory.rock],
+                vec![Card::Paper; player.inventory.paper],
+                vec![Card::Scissors; player.inventory.scissors],
             ]
             .concat();
             fastrand::choice(&deck).cloned()
