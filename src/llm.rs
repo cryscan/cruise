@@ -361,7 +361,7 @@ impl LlmActor {
             let role = Role::Assistant(player.entity);
             let prompt = Self::prompt_role(&self.chat, &role);
             self.chat_llm(
-                "[notify]",
+                format!("[notify][{}]", player.name),
                 role,
                 prompt,
                 "Let's think step by step, Owner. Based on your current status,",
