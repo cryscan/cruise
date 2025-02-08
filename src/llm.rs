@@ -249,7 +249,7 @@ impl LlmActor {
             }
 
             let record = ChatRecord::new(role, content);
-            // bevy::log::info!("[{head}][prompt] {prompt}{prefix}");
+            // bevy::log::info!("{head}[prompt] {prompt}{prefix}");
             bevy::log::info!("{head} {record}");
 
             self.llm.lock().await.push(LlmRecord { request, response });
@@ -448,13 +448,37 @@ impl LlmActor {
         opponent: &'a OpponentData,
         history: &'a [ChatRecord],
     ) -> Trade {
+        let cot = {
+            let role = Role::actor(player.entity, &player.name);
+            let prompt = format!(
+                include_str!("prompts/trade_3_0.md"),
+                player.name,
+                opponent.name,
+                Self::prompt_compact(history),
+            );
+            let record = self
+                .chat_llm(
+                    "[trade][0]",
+                    role,
+                    prompt,
+                    "Let's think step by step.",
+                    "",
+                    &["\n\n"],
+                    None,
+                    None,
+                    Default::default(),
+                )
+                .await;
+            record.content
+        };
         loop {
             let role = Role::actor(player.entity, &player.name);
             let prompt = format!(
-                include_str!("prompts/trade_3.md"),
+                include_str!("prompts/trade_3_1.md"),
                 player.name,
                 opponent.name,
-                Self::prompt_compact(history)
+                Self::prompt_compact(history),
+                cot,
             );
             let bnf_schema = include_str!("prompts/bnf_trade.txt");
             let sampler = Sampler {
@@ -465,14 +489,14 @@ impl LlmActor {
             };
             let record = self
                 .chat_llm(
-                    "[trade]",
+                    "[trade][1]",
                     role,
                     prompt,
                     "",
                     bnf_schema,
                     &["\n\n"],
-                    Some(player),
-                    Some(opponent),
+                    None,
+                    None,
                     sampler,
                 )
                 .await;
