@@ -103,6 +103,8 @@ pub struct Choice {
 pub struct LlmRecord {
     pub request: CompletionRequest,
     pub response: CompletionResponse,
+    pub player: PlayerData,
+    pub opponent: Option<OpponentData>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -110,8 +112,9 @@ pub struct LlmActor {
     pub url: String,
     pub state: uuid::Uuid,
 
-    pub llm: Arc<Mutex<Vec<LlmRecord>>>,
     pub chat: Vec<ChatRecord>,
+    pub history: Arc<Mutex<Vec<LlmRecord>>>,
+
     pub dummy: DummyActor,
 }
 
@@ -179,7 +182,7 @@ impl LlmActor {
         prefix: impl AsRef<str>,
         bnf_schema: impl AsRef<str>,
         stop: &[impl AsRef<str>],
-        player: Option<&PlayerData>,
+        player: &PlayerData,
         opponent: Option<&OpponentData>,
         sampler: Sampler,
     ) -> ChatRecord {
@@ -205,14 +208,12 @@ impl LlmActor {
                 "\n[".into(),
                 "\n<".into(),
             ]);
-            if let Some(player) = player {
-                stop.extend([
-                    format!("\n{}", player.name),
-                    format!("\n*{}", player.name),
-                    format!("\n**{}", player.name),
-                    format!("{}:", player.name),
-                ]);
-            }
+            stop.extend([
+                format!("\n{}", player.name),
+                format!("\n*{}", player.name),
+                format!("\n**{}", player.name),
+                format!("{}:", player.name),
+            ]);
             if let Some(opponent) = opponent {
                 stop.extend([
                     format!("\n{}", opponent.name),
@@ -252,7 +253,14 @@ impl LlmActor {
             // bevy::log::info!("{head}[prompt] {prompt}{prefix}");
             bevy::log::info!("{head} {record}");
 
-            self.llm.lock().await.push(LlmRecord { request, response });
+            let player = player.clone();
+            let opponent = opponent.cloned();
+            self.history.lock().await.push(LlmRecord {
+                request,
+                response,
+                player,
+                opponent,
+            });
             break record;
         }
     }
@@ -387,7 +395,7 @@ impl LlmActor {
                 "Let's think step by step, Owner. Based on your current status,",
                 "",
                 &["\n\n"],
-                Some(player),
+                player,
                 None,
                 Default::default(),
             )
@@ -444,13 +452,13 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
-                format!("[chat_trade][{round}]"),
+                format!("[chat][{round}]"),
                 role,
                 prompt,
                 "",
                 "",
                 &["\n"],
-                Some(player),
+                player,
                 Some(opponent),
                 sampler,
             )
@@ -469,7 +477,7 @@ impl LlmActor {
         history: &'a [ChatRecord],
     ) -> Trade {
         let cot = {
-            let role = Role::actor(player.entity, &player.name);
+            let role = Role::None;
             let prompt = format!(
                 include_str!("prompts/trade_3_0.md"),
                 player.name,
@@ -478,13 +486,13 @@ impl LlmActor {
             );
             let record = self
                 .chat_llm(
-                    "[trade][0]",
+                    format!("[trade][0][{}]", player.name),
                     role,
                     prompt,
                     "Let's think step by step.",
                     "",
                     &["\n\n"],
-                    None,
+                    player,
                     None,
                     Default::default(),
                 )
@@ -492,7 +500,7 @@ impl LlmActor {
             record.content
         };
         loop {
-            let role = Role::actor(player.entity, &player.name);
+            let role = Role::None;
             let prompt = format!(
                 include_str!("prompts/trade_3_1.md"),
                 player.name,
@@ -509,13 +517,13 @@ impl LlmActor {
             };
             let record = self
                 .chat_llm(
-                    "[trade][1]",
+                    format!("[trade][1][{}]", player.name),
                     role,
                     prompt,
                     "",
                     bnf_schema,
                     &["\n\n"],
-                    None,
+                    player,
                     None,
                     sampler,
                 )
@@ -575,13 +583,13 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
-                "[trade][accept]",
+                "[trade][2][accept]",
                 role,
                 prompt,
                 "",
                 "",
                 &["\n"],
-                Some(player),
+                player,
                 Some(opponent),
                 sampler,
             )
@@ -612,13 +620,13 @@ impl LlmActor {
                 " I give my response with a \"",
             ];
             self.chat_llm(
-                "[trade][accept][confirm]",
+                "[trade][3][accept][confirm]",
                 role,
                 prompt,
                 fastrand::choice(&prefixes).unwrap(),
                 "start ::= \"Yes\\\".\" | \"No\\\".\";",
                 &["\n"],
-                Some(player),
+                player,
                 Some(opponent),
                 sampler,
             )
@@ -660,13 +668,13 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
-                "[trade][feedback]",
+                "[trade][4][feedback]",
                 role,
                 prompt,
                 "",
                 "",
                 &["\n"],
-                Some(player),
+                player,
                 None,
                 sampler,
             )
@@ -706,7 +714,7 @@ impl LlmActor {
                 "Let's analyze the situation.",
                 "",
                 &["\n\n"],
-                Some(player),
+                player,
                 Some(opponent),
                 Default::default(),
             )
@@ -728,7 +736,7 @@ impl LlmActor {
                 "",
                 "",
                 &["\n"],
-                Some(player),
+                player,
                 None,
                 sampler,
             )
@@ -768,13 +776,13 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
-                "[duel][accept][0]",
+                "[duel][0][accept]",
                 role,
                 prompt,
                 "",
                 "",
                 &["\n"],
-                Some(player),
+                player,
                 None,
                 sampler,
             )
@@ -784,7 +792,7 @@ impl LlmActor {
         self.chat.push(record);
 
         let card = {
-            let role = Role::actor(player.entity, &player.name);
+            let role = Role::None;
             let prompt = Self::prompt_compact(&history);
             let prompt = format!(
                 include_str!("prompts/duel_3.md"),
@@ -798,7 +806,12 @@ impl LlmActor {
             .concat();
             let choices = deck.into_iter().map(|card| card.to_string()).collect_vec();
             let choices = self
-                .choose_llm("[duel][accept][1]", role, prompt, &choices)
+                .choose_llm(
+                    format!("[duel][1][accept][{}]", player.name),
+                    role,
+                    prompt,
+                    &choices,
+                )
                 .await;
             match choices.first().map(|x| x.as_ref()) {
                 Some("Rock") => Some(Card::Rock),
@@ -859,7 +872,7 @@ impl LlmActor {
                 "",
                 "",
                 &["\n"],
-                Some(player),
+                player,
                 None,
                 sampler,
             )

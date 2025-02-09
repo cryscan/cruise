@@ -6,7 +6,7 @@ version = "0.1.0"
 [dependencies]
 anyhow = "1"
 async-std = "1.13"
-bevy = "0.15"
+bevy = { version = "0.15", features = ["serialize"] }
 bevy-async-ecs = "0.7"
 bevy-inspector-egui = "0.29"
 clap = { version = "4", features = ["derive"] }

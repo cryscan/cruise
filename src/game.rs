@@ -103,7 +103,9 @@ pub struct Inventory {
     pub scissors: usize,
 }
 
-#[derive(Debug, Default, Clone, Copy, Deref, DerefMut, Component, Reflect)]
+#[derive(
+    Debug, Default, Clone, Copy, Deref, DerefMut, Component, Reflect, Serialize, Deserialize,
+)]
 #[reflect(Component, Default)]
 pub struct PlayerTimer(pub usize);
 
@@ -406,7 +408,7 @@ fn match_players(mut commands: Commands, players: Query<PlayerQuery>, tables: Qu
     }
 }
 
-#[allow(unused)]
+#[allow(clippy::type_complexity)]
 fn update_players(
     mut commands: Commands,
     players: Query<
@@ -479,7 +481,7 @@ fn poll_duel(
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerData {
     pub entity: Entity,
     pub name: Name,
@@ -506,7 +508,7 @@ impl<'a> From<PlayerQueryItem<'a>> for PlayerData {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpponentData {
     pub name: Name,
     pub star: usize,
