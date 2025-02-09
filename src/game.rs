@@ -508,9 +508,13 @@ fn final_trade(
     *processed = true;
 }
 
-async fn dump_player(path: impl AsRef<Path>, actor: Arc<Mutex<dyn Actor>>) -> Result<()> {
+async fn dump_player(
+    path: impl AsRef<Path>,
+    actor: Arc<Mutex<dyn Actor>>,
+    player: &PlayerData,
+) -> Result<()> {
     let actor = actor.lock().await;
-    let data = actor.dump().await?;
+    let data = actor.dump(player).await?;
 
     let mut file = File::create(path).await?;
     file.write_all(&data).await?;
@@ -518,15 +522,16 @@ async fn dump_player(path: impl AsRef<Path>, actor: Arc<Mutex<dyn Actor>>) -> Re
     Ok(())
 }
 
-fn dump_players(settings: Res<Settings>, players: Query<(&Name, &Player)>) {
+fn dump_players(settings: Res<Settings>, players: Query<PlayerQuery>) {
     let thread_pool = IoTaskPool::get();
-    for (name, player) in &players {
-        let name = name.clone();
+    for player in &players {
+        let name = player.name.clone();
         let path = settings.output.join(format!("{name}.json"));
-        let actor = player.actor.clone();
+        let actor = player.player.actor.clone();
+        let player = player.into();
         thread_pool
             .spawn(async move {
-                match dump_player(&path, actor).await {
+                match dump_player(&path, actor, &player).await {
                     Ok(_) => bevy::log::info!("dumped {name} to {:?}", path),
                     Err(err) => bevy::log::error!("{err}"),
                 }
@@ -836,7 +841,7 @@ pub trait Actor: ConditionalSend + Sync + 'static {
         Box::pin(async move {})
     }
 
-    fn dump(&self) -> BoxedFuture<Result<Vec<u8>>> {
+    fn dump<'a>(&'a self, player: &'a PlayerData) -> BoxedFuture<'a, Result<Vec<u8>>> {
         Box::pin(async move { Ok(vec![]) })
     }
 }

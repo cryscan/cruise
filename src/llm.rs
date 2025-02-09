@@ -2,13 +2,13 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use async_std::sync::Mutex;
-use bevy::utils::BoxedFuture;
+use bevy::{core::Name, utils::BoxedFuture};
 use derivative::Derivative;
 use itertools::Itertools;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::game::{
-    Actor, Card, ChatKind, ChatRecord, DuelResult, DummyActor, OpponentData, PlayerData,
+    Actor, Card, ChatKind, ChatRecord, DuelResult, DummyActor, Inventory, OpponentData, PlayerData,
     PublicState, Role, Stake, StakeState, Trade, TradeState, ASSISTANT_NAME, NUM_CHAT_ROUNDS,
     NUM_PLAYERS, SYSTEM_NAME,
 };
@@ -970,10 +970,22 @@ impl Actor for LlmActor {
         Box::pin(self.feedback_duel(player, result))
     }
 
-    fn dump(&self) -> BoxedFuture<Result<Vec<u8>>> {
+    fn dump<'a>(&'a self, player: &'a PlayerData) -> BoxedFuture<'a, Result<Vec<u8>>> {
+        #[derive(Serialize)]
+        struct DumpData<'a> {
+            name: &'a Name,
+            inventory: &'a Inventory,
+            history: &'a [LlmRecord],
+        }
+
         Box::pin(async move {
             let history = self.history.lock().await;
-            Ok(serde_json::to_vec(&history[..])?)
+            let data = DumpData {
+                name: &player.name,
+                inventory: &player.inventory,
+                history: &history[..],
+            };
+            Ok(serde_json::to_vec(&data)?)
         })
     }
 }
