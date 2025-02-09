@@ -49,6 +49,7 @@ impl Plugin for GamePlugin {
                     update_players,
                     start_duel,
                     poll_duel,
+                    game_over.run_if(is_game_over),
                 ),
             );
     }
@@ -110,7 +111,7 @@ pub struct Inventory {
 pub struct PlayerTimer(pub usize);
 
 impl PlayerTimer {
-    pub fn is_empty(&self) -> bool {
+    pub fn time_up(&self) -> bool {
         self.0 == 0
     }
 
@@ -392,7 +393,7 @@ fn match_players(mut commands: Commands, players: Query<PlayerQuery>, tables: Qu
         })
         .filter(|PlayerQueryItem { inventory, .. }| inventory.is_alive())
         .filter(|PlayerQueryItem { inventory, .. }| !inventory.is_safe())
-        .filter(|PlayerQueryItem { timer, .. }| !timer.is_empty())
+        .filter(|PlayerQueryItem { timer, .. }| !timer.time_up())
         .collect_vec();
 
     if players.len() < MIN_MATCH_PLAYERS {
@@ -428,6 +429,20 @@ fn update_players(
     }
 }
 
+fn is_game_over(players: Query<(&Inventory, &PlayerTimer), With<Player>>) -> bool {
+    players
+        .iter()
+        .filter(|(inventory, _)| inventory.is_alive())
+        .filter(|(inventory, _)| !inventory.is_safe())
+        .filter(|(_, timer)| !timer.time_up())
+        .count()
+        == 0
+}
+
+fn game_over() {
+    bevy::log::info_once!("game over")
+}
+
 #[derive(Debug, Component)]
 pub struct DuelTask(pub Task<Result<[Inventory; 2]>>);
 
@@ -445,8 +460,8 @@ fn start_duel(
         assert!(x.inventory.is_alive());
         assert!(y.inventory.is_alive());
 
-        assert!(!x.timer.is_empty());
-        assert!(!y.timer.is_empty());
+        assert!(!x.timer.time_up());
+        assert!(!y.timer.time_up());
 
         let state = state.clone();
         let actors = [x.player.actor.clone(), y.player.actor.clone()];
@@ -530,9 +545,9 @@ pub enum Role {
     #[default]
     None,
     System(Entity),
+    Transparent(Entity),
     Assistant(Entity),
     Actor(Entity, String),
-    Inner(Entity, String),
 }
 
 impl Role {
@@ -540,21 +555,16 @@ impl Role {
         let name = name.as_ref().trim().to_owned();
         Self::Actor(entity, name)
     }
-
-    pub fn inner(entity: Entity, name: impl AsRef<str>) -> Self {
-        let name = name.as_ref().trim().to_owned();
-        Self::Inner(entity, name)
-    }
 }
 
 impl Display for Role {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Role::None => write!(f, ""),
+            Role::Transparent(_) => write!(f, ""),
             Role::System(_) => write!(f, "{SYSTEM_NAME}",),
             Role::Assistant(_) => write!(f, "{ASSISTANT_NAME}",),
             Role::Actor(_, name) => write!(f, "{name}"),
-            Role::Inner(_, name) => write!(f, "{name} (inner voice)"),
         }
     }
 }
@@ -758,7 +768,7 @@ pub async fn duel(
         history
             .iter()
             .filter(|x| match x.role.clone() {
-                Role::Assistant(entity) | Role::Inner(entity, _) => entity == data.entity,
+                Role::Assistant(entity) => entity == data.entity,
                 _ => true,
             })
             .cloned()

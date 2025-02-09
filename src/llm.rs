@@ -103,6 +103,8 @@ pub struct Choice {
 pub struct LlmRecord {
     pub request: CompletionRequest,
     pub response: CompletionResponse,
+
+    pub record: ChatRecord,
     pub player: PlayerData,
     pub opponent: Option<OpponentData>,
 }
@@ -253,14 +255,19 @@ impl LlmActor {
             // bevy::log::info!("{head}[prompt] {prompt}{prefix}");
             bevy::log::info!("{head} {record}");
 
-            let player = player.clone();
-            let opponent = opponent.cloned();
-            self.history.lock().await.push(LlmRecord {
-                request,
-                response,
-                player,
-                opponent,
-            });
+            {
+                let record = record.clone();
+                let player = player.clone();
+                let opponent = opponent.cloned();
+                self.history.lock().await.push(LlmRecord {
+                    request,
+                    response,
+                    record,
+                    player,
+                    opponent,
+                });
+            }
+
             break record;
         }
     }
@@ -392,7 +399,7 @@ impl LlmActor {
                 format!("[notify][{}]", player.name),
                 role,
                 prompt,
-                "Let's think step by step, Owner. Based on your current status,",
+                "Based on the situation and your current status,",
                 "",
                 &["\n\n"],
                 player,
@@ -477,7 +484,7 @@ impl LlmActor {
         history: &'a [ChatRecord],
     ) -> Trade {
         let cot = {
-            let role = Role::None;
+            let role = Role::Transparent(player.entity);
             let prompt = format!(
                 include_str!("prompts/trade_3_0.md"),
                 player.name,
@@ -500,7 +507,7 @@ impl LlmActor {
             record.content
         };
         loop {
-            let role = Role::None;
+            let role = Role::Transparent(player.entity);
             let prompt = format!(
                 include_str!("prompts/trade_3_1.md"),
                 player.name,
@@ -792,7 +799,7 @@ impl LlmActor {
         self.chat.push(record);
 
         let card = {
-            let role = Role::None;
+            let role = Role::Transparent(player.entity);
             let prompt = Self::prompt_compact(&history);
             let prompt = format!(
                 include_str!("prompts/duel_3.md"),
@@ -866,7 +873,7 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
-                "[duel][feedback]",
+                "[duel][2][feedback]",
                 role,
                 prompt,
                 "",
