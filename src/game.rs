@@ -43,16 +43,25 @@ impl Plugin for GamePlugin {
             .add_systems(Startup, setup_scene)
             .add_systems(
                 Update,
-                (
-                    update_public_state,
-                    match_players,
-                    update_players,
-                    start_duel,
-                    poll_duel,
-                    game_over.run_if(is_game_over),
-                ),
+                (update_public_state, match_players, update_players).in_set(GameSet::Player),
+            )
+            .add_systems(Update, (start_duel, poll_duel).in_set(GameSet::Duel))
+            .add_systems(
+                Update,
+                game_over.run_if(is_game_over).in_set(GameSet::GameOver),
+            )
+            .configure_sets(
+                Update,
+                (GameSet::Player, GameSet::Duel, GameSet::GameOver).chain(),
             );
     }
+}
+
+#[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone, Copy)]
+enum GameSet {
+    Player,
+    Duel,
+    GameOver,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -104,9 +113,94 @@ pub struct Inventory {
     pub scissors: usize,
 }
 
-#[derive(
-    Debug, Default, Clone, Copy, Deref, DerefMut, Component, Reflect, Serialize, Deserialize,
-)]
+impl Inventory {
+    pub fn num_cards(&self) -> usize {
+        self.rock + self.paper + self.scissors
+    }
+
+    pub fn is_alive(&self) -> bool {
+        self.star > 0
+    }
+
+    pub fn is_safe(&self) -> bool {
+        self.star >= 3 && self.num_cards() == 0
+    }
+
+    pub fn can_duel(&self) -> bool {
+        self.num_cards() > 0
+    }
+
+    pub fn star_price(&self) -> Option<usize> {
+        match self.star {
+            x if x >= 3 => None,
+            x => Some(self.coin / (3 - x)),
+        }
+    }
+
+    pub fn split_trade(&self, trade: &Trade) -> Result<Self, TradeError> {
+        match (self, trade) {
+            (x, y) if x.star < y.star => Err(TradeError::Star(x.star, y.star)),
+            (x, y) if x.coin < y.coin => Err(TradeError::Coin(x.coin, y.coin)),
+            (x, y) if x.rock < y.rock => Err(TradeError::Rock(x.rock, y.rock)),
+            (x, y) if x.paper < y.paper => Err(TradeError::Paper(x.paper, y.paper)),
+            (x, y) if x.scissors < y.scissors => Err(TradeError::Scissors(x.scissors, y.scissors)),
+            (x, y) => Ok(Self {
+                star: x.star - y.star,
+                coin: x.coin - y.coin,
+                rock: x.rock - y.rock,
+                paper: x.paper - y.paper,
+                scissors: x.scissors - y.scissors,
+            }),
+        }
+    }
+
+    pub fn apply_trade(&mut self, trade: &Trade) {
+        self.star += trade.star;
+        self.coin += trade.coin;
+        self.rock += trade.rock;
+        self.paper += trade.paper;
+        self.scissors += trade.scissors;
+    }
+
+    pub fn split_stake(&self, stake: &Stake) -> Result<Self, StakeError> {
+        match (self, stake) {
+            (x, y) if x.star < y.star => Err(StakeError::Star(x.star, y.star)),
+            (x, y) if x.coin < y.coin => Err(StakeError::Coin(x.coin, y.coin)),
+            (x, y) => Ok(Self {
+                star: x.star - y.star,
+                coin: x.coin - y.coin,
+                ..x.clone()
+            }),
+        }
+    }
+
+    pub fn apply_stake(&mut self, stake: &Stake) {
+        self.star += stake.star;
+        self.coin += stake.coin;
+    }
+
+    pub fn split_duel(&self, card: Card) -> Result<Self, DuelError> {
+        match (self, card) {
+            (x, Card::Rock) if x.rock == 0 => Err(DuelError::Rock),
+            (x, Card::Paper) if x.paper == 0 => Err(DuelError::Paper),
+            (x, Card::Scissors) if x.scissors == 0 => Err(DuelError::Scissors),
+            (x, Card::Rock) => Ok(Self {
+                rock: x.rock - 1,
+                ..x.clone()
+            }),
+            (x, Card::Paper) => Ok(Self {
+                paper: x.paper - 1,
+                ..x.clone()
+            }),
+            (x, Card::Scissors) => Ok(Self {
+                scissors: x.scissors - 1,
+                ..x.clone()
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, Component, Reflect, Serialize, Deserialize)]
 #[reflect(Component, Default)]
 pub struct PlayerTimer(pub usize);
 
@@ -214,86 +308,6 @@ pub enum DuelError {
     Scissors,
 }
 
-impl Inventory {
-    pub fn num_cards(&self) -> usize {
-        self.rock + self.paper + self.scissors
-    }
-
-    pub fn is_alive(&self) -> bool {
-        self.star > 0
-    }
-
-    pub fn is_safe(&self) -> bool {
-        self.star >= 3 && self.num_cards() == 0
-    }
-
-    pub fn can_duel(&self) -> bool {
-        self.num_cards() > 0
-    }
-
-    pub fn split_trade(&self, trade: &Trade) -> Result<Self, TradeError> {
-        match (self, trade) {
-            (x, y) if x.star < y.star => Err(TradeError::Star(x.star, y.star)),
-            (x, y) if x.coin < y.coin => Err(TradeError::Coin(x.coin, y.coin)),
-            (x, y) if x.rock < y.rock => Err(TradeError::Rock(x.rock, y.rock)),
-            (x, y) if x.paper < y.paper => Err(TradeError::Paper(x.paper, y.paper)),
-            (x, y) if x.scissors < y.scissors => Err(TradeError::Scissors(x.scissors, y.scissors)),
-            (x, y) => Ok(Self {
-                star: x.star - y.star,
-                coin: x.coin - y.coin,
-                rock: x.rock - y.rock,
-                paper: x.paper - y.paper,
-                scissors: x.scissors - y.scissors,
-            }),
-        }
-    }
-
-    pub fn apply_trade(&mut self, trade: &Trade) {
-        self.star += trade.star;
-        self.coin += trade.coin;
-        self.rock += trade.rock;
-        self.paper += trade.paper;
-        self.scissors += trade.scissors;
-    }
-
-    pub fn split_stake(&self, stake: &Stake) -> Result<Self, StakeError> {
-        match (self, stake) {
-            (x, y) if x.star < y.star => Err(StakeError::Star(x.star, y.star)),
-            (x, y) if x.coin < y.coin => Err(StakeError::Coin(x.coin, y.coin)),
-            (x, y) => Ok(Self {
-                star: x.star - y.star,
-                coin: x.coin - y.coin,
-                ..x.clone()
-            }),
-        }
-    }
-
-    pub fn apply_stake(&mut self, stake: &Stake) {
-        self.star += stake.star;
-        self.coin += stake.coin;
-    }
-
-    pub fn split_duel(&self, card: Card) -> Result<Self, DuelError> {
-        match (self, card) {
-            (x, Card::Rock) if x.rock == 0 => Err(DuelError::Rock),
-            (x, Card::Paper) if x.paper == 0 => Err(DuelError::Paper),
-            (x, Card::Scissors) if x.scissors == 0 => Err(DuelError::Scissors),
-            (x, Card::Rock) => Ok(Self {
-                rock: x.rock - 1,
-                ..x.clone()
-            }),
-            (x, Card::Paper) => Ok(Self {
-                paper: x.paper - 1,
-                ..x.clone()
-            }),
-            (x, Card::Scissors) => Ok(Self {
-                scissors: x.scissors - 1,
-                ..x.clone()
-            }),
-        }
-    }
-}
-
 #[derive(Derivative, Component)]
 #[derivative(Debug)]
 pub struct Player {
@@ -396,10 +410,6 @@ fn match_players(mut commands: Commands, players: Query<PlayerQuery>, tables: Qu
         .filter(|PlayerQueryItem { timer, .. }| !timer.time_up())
         .collect_vec();
 
-    if players.len() < MIN_MATCH_PLAYERS {
-        return;
-    }
-
     fastrand::shuffle(&mut players);
 
     for (x, y) in players.into_iter().tuples() {
@@ -436,11 +446,56 @@ fn is_game_over(players: Query<(&Inventory, &PlayerTimer), With<Player>>) -> boo
         .filter(|(inventory, _)| !inventory.is_safe())
         .filter(|(_, timer)| !timer.time_up())
         .count()
-        == 0
+        < 2
 }
 
-fn game_over() {
-    bevy::log::info_once!("game over")
+#[allow(clippy::type_complexity)]
+fn game_over(
+    mut processed: Local<bool>,
+    mut survivors: Query<(&Name, &mut Inventory), (With<Player>, With<PlayerSafe>)>,
+    mut players: Query<
+        (&Name, &mut Inventory),
+        (With<Player>, Without<PlayerSafe>, Without<PlayerDead>),
+    >,
+) {
+    if *processed {
+        return;
+    }
+
+    bevy::log::info!("Game Over");
+
+    for mut player in players
+        .iter_mut()
+        .filter(|x| x.1.num_cards() == 0)
+        .sorted_by(|x, y| y.1.star_price().cmp(&x.1.star_price()))
+    {
+        let price = player.1.star_price().unwrap_or_default();
+        while player.1.star < 3 {
+            let seller = survivors
+                .iter_mut()
+                .filter(|x| x.1.star > 3)
+                .sorted_by(|x, y| y.1.star.cmp(&x.1.star))
+                .next();
+            let Some(mut seller) = seller else {
+                break;
+            };
+
+            player.1.star += 1;
+            seller.1.star -= 1;
+
+            player.1.coin -= price;
+            seller.1.coin += price;
+
+            bevy::log::info!(
+                "{} buys from {} 1 star for {} coins",
+                player.0,
+                seller.0,
+                price
+            );
+        }
+    }
+
+    *processed = true;
 }
 
 #[derive(Debug, Component)]
