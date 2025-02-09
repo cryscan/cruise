@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use bevy::prelude::*;
 use bevy_async_ecs::AsyncEcsPlugin;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
@@ -13,18 +15,23 @@ pub mod llm;
 struct Args {
     #[arg(long, default_value = "http://localhost:65530")]
     url: String,
+    #[arg(long, short, default_value = "./output")]
+    out: PathBuf,
 }
 
-#[derive(Debug, Clone, Deref, DerefMut, Resource, Reflect)]
-pub struct ServerUrl(pub String);
+#[derive(Debug, Clone, Resource, Reflect)]
+pub struct Settings {
+    pub url: String,
+    pub output: PathBuf,
+}
 
 fn main() {
-    let args = Args::parse();
+    let Args { url, out } = Args::parse();
 
     App::new()
         .add_plugins((DefaultPlugins, AsyncEcsPlugin, WorldInspectorPlugin::new()))
         .add_plugins(GamePlugin)
-        .register_type::<ServerUrl>()
-        .insert_resource(ServerUrl(args.url))
+        .register_type::<Settings>()
+        .insert_resource(Settings { url, output: out })
         .run();
 }

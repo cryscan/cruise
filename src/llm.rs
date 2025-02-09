@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use async_std::sync::Mutex;
@@ -112,19 +112,21 @@ pub struct LlmRecord {
 #[derive(Debug, Default, Clone)]
 pub struct LlmActor {
     pub url: String,
-    pub state: uuid::Uuid,
+    pub output: PathBuf,
 
     pub chat: Vec<ChatRecord>,
     pub history: Arc<Mutex<Vec<LlmRecord>>>,
 
+    pub state: uuid::Uuid,
     pub dummy: DummyActor,
 }
 
 impl LlmActor {
-    pub fn new(url: impl ToString) -> Self {
+    pub fn new(url: impl ToString, output: PathBuf) -> Self {
         let url = url.to_string();
         Self {
             url,
+            output,
             ..Default::default()
         }
     }
@@ -966,5 +968,12 @@ impl Actor for LlmActor {
         result: DuelResult,
     ) -> BoxedFuture<'a, ()> {
         Box::pin(self.feedback_duel(player, result))
+    }
+
+    fn dump(&self) -> BoxedFuture<Result<Vec<u8>>> {
+        Box::pin(async move {
+            let history = self.history.lock().await;
+            Ok(serde_json::to_vec(&history[..])?)
+        })
     }
 }

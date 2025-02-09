@@ -5,9 +5,9 @@ use std::{
 };
 
 use anyhow::{bail, Result};
-use async_std::{sync::Mutex, task::block_on};
+use async_std::{fs::File, io::WriteExt, path::Path, sync::Mutex, task::block_on};
 use bevy::{
-    ecs::query::QueryData,
+    ecs::{query::QueryData, system::SystemId},
     prelude::*,
     tasks::{futures_lite::future, IoTaskPool, Task},
     utils::{BoxedFuture, ConditionalSend},
@@ -18,7 +18,7 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{llm::LlmActor, ServerUrl};
+use crate::{llm::LlmActor, Settings};
 
 pub const NUM_PLAYERS: usize = 16;
 pub const MIN_MATCH_PLAYERS: usize = 2;
@@ -48,7 +48,7 @@ impl Plugin for GamePlugin {
             .add_systems(Update, (start_duel, poll_duel).in_set(GameSet::Duel))
             .add_systems(
                 Update,
-                game_over.run_if(is_game_over).in_set(GameSet::GameOver),
+                final_trade.run_if(is_game_over).in_set(GameSet::GameOver),
             )
             .configure_sets(
                 Update,
@@ -308,6 +308,9 @@ pub enum DuelError {
     Scissors,
 }
 
+#[derive(Debug, Clone, Copy, Resource)]
+pub struct DumpPlayersSystem(pub SystemId);
+
 #[derive(Derivative, Component)]
 #[derivative(Debug)]
 pub struct Player {
@@ -333,7 +336,7 @@ impl Table {
 }
 
 #[derive(Debug, Default, Clone, Resource, Reflect, Serialize, Deserialize)]
-#[reflect(Resource)]
+#[reflect(Resource, Default)]
 pub struct PublicState {
     pub player: usize,
     pub rock: usize,
@@ -357,18 +360,21 @@ struct PlayerQuery {
     timer: &'static PlayerTimer,
 }
 
-fn setup_scene(mut commands: Commands, server_url: Res<ServerUrl>) {
+fn setup_scene(mut commands: Commands, settings: Res<Settings>) {
     let names = NAMES.split("\n").map(|x| x.trim()).collect_vec();
-    let url = server_url.0.clone();
+    let Settings { url, output } = settings.clone();
     commands.spawn_batch((0..NUM_PLAYERS).map(move |index| {
         (
             Name::new(names[index]),
-            Player::new(LlmActor::new(url.clone())),
+            Player::new(LlmActor::new(url.clone(), output.clone())),
             // Player::new(DummyActor),
             Inventory::default(),
             PlayerTimer(MAX_ROUNDS),
         )
     }));
+
+    let system = DumpPlayersSystem(commands.register_system(dump_players));
+    commands.insert_resource(system);
 }
 
 fn update_public_state(mut state: ResMut<PublicState>, players: Query<&Inventory, With<Player>>) {
@@ -450,13 +456,15 @@ fn is_game_over(players: Query<(&Inventory, &PlayerTimer), With<Player>>) -> boo
 }
 
 #[allow(clippy::type_complexity)]
-fn game_over(
+fn final_trade(
+    mut commands: Commands,
     mut processed: Local<bool>,
     mut survivors: Query<(&Name, &mut Inventory), (With<Player>, With<PlayerSafe>)>,
     mut players: Query<
         (&Name, &mut Inventory),
         (With<Player>, Without<PlayerSafe>, Without<PlayerDead>),
     >,
+    system: Res<DumpPlayersSystem>,
 ) {
     if *processed {
         return;
@@ -495,7 +503,36 @@ fn game_over(
         }
     }
 
+    commands.run_system(system.0);
+
     *processed = true;
+}
+
+async fn dump_player(path: impl AsRef<Path>, actor: Arc<Mutex<dyn Actor>>) -> Result<()> {
+    let actor = actor.lock().await;
+    let data = actor.dump().await?;
+
+    let mut file = File::create(path).await?;
+    file.write_all(&data).await?;
+
+    Ok(())
+}
+
+fn dump_players(settings: Res<Settings>, players: Query<(&Name, &Player)>) {
+    let thread_pool = IoTaskPool::get();
+    for (name, player) in &players {
+        let name = name.clone();
+        let path = settings.output.join(format!("{name}.json"));
+        let actor = player.actor.clone();
+        thread_pool
+            .spawn(async move {
+                match dump_player(&path, actor).await {
+                    Ok(_) => bevy::log::info!("dumped {name} to {:?}", path),
+                    Err(err) => bevy::log::error!("{err}"),
+                }
+            })
+            .detach();
+    }
 }
 
 #[derive(Debug, Component)]
@@ -797,6 +834,10 @@ pub trait Actor: ConditionalSend + Sync + 'static {
         result: DuelResult,
     ) -> BoxedFuture<'a, ()> {
         Box::pin(async move {})
+    }
+
+    fn dump(&self) -> BoxedFuture<Result<Vec<u8>>> {
+        Box::pin(async move { Ok(vec![]) })
     }
 }
 
