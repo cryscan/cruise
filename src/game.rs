@@ -22,7 +22,7 @@ use crate::{llm::LlmActor, ServerUrl};
 
 pub const NUM_PLAYERS: usize = 16;
 pub const MIN_MATCH_PLAYERS: usize = 2;
-pub const MAX_ROUNDS: usize = 6;
+pub const MAX_ROUNDS: usize = 16;
 pub const NUM_CHAT_ROUNDS: usize = 4;
 pub const MAX_TRAIL_ROUNDS: usize = 3;
 
@@ -36,13 +36,20 @@ pub struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<Inventory>()
+            .register_type::<PlayerTimer>()
             .register_type::<Table>()
             .register_type::<PublicState>()
             .init_resource::<PublicState>()
             .add_systems(Startup, setup_scene)
             .add_systems(
                 Update,
-                (update_public_state, match_players, start_duel, poll_duel),
+                (
+                    update_public_state,
+                    match_players,
+                    update_players,
+                    start_duel,
+                    poll_duel,
+                ),
             );
     }
 }
@@ -82,7 +89,7 @@ impl Display for Card {
 
 #[derive(Debug, Derivative, Clone, Component, Reflect, Serialize, Deserialize)]
 #[derivative(Default)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 pub struct Inventory {
     #[derivative(Default(value = "3"))]
     pub star: usize,
@@ -97,8 +104,29 @@ pub struct Inventory {
 }
 
 #[derive(Debug, Default, Clone, Copy, Deref, DerefMut, Component, Reflect)]
-#[reflect(Component)]
-pub struct CountDown(pub usize);
+#[reflect(Component, Default)]
+pub struct PlayerTimer(pub usize);
+
+impl PlayerTimer {
+    pub fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn decrease(&mut self) {
+        match self.0 {
+            0 => {}
+            _ => self.0 -= 1,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, Component, Reflect)]
+#[reflect(Component, Default)]
+pub struct PlayerSafe;
+
+#[derive(Debug, Default, Clone, Copy, Component, Reflect)]
+#[reflect(Component, Default)]
+pub struct PlayerDead;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Trade {
@@ -309,7 +337,7 @@ struct PlayerQuery {
     player: &'static Player,
     name: &'static Name,
     inventory: &'static Inventory,
-    count_down: &'static CountDown,
+    timer: &'static PlayerTimer,
 }
 
 fn setup_scene(mut commands: Commands, server_url: Res<ServerUrl>) {
@@ -319,8 +347,9 @@ fn setup_scene(mut commands: Commands, server_url: Res<ServerUrl>) {
         (
             Name::new(names[index]),
             Player::new(LlmActor::new(url.clone())),
+            // Player::new(DummyActor),
             Inventory::default(),
-            CountDown(MAX_ROUNDS),
+            PlayerTimer(MAX_ROUNDS),
         )
     }));
 }
@@ -361,7 +390,7 @@ fn match_players(mut commands: Commands, players: Query<PlayerQuery>, tables: Qu
         })
         .filter(|PlayerQueryItem { inventory, .. }| inventory.is_alive())
         .filter(|PlayerQueryItem { inventory, .. }| !inventory.is_safe())
-        .filter(|PlayerQueryItem { count_down, .. }| count_down.0 > 0)
+        .filter(|PlayerQueryItem { timer, .. }| !timer.is_empty())
         .collect_vec();
 
     if players.len() < MIN_MATCH_PLAYERS {
@@ -378,18 +407,21 @@ fn match_players(mut commands: Commands, players: Query<PlayerQuery>, tables: Qu
 }
 
 #[allow(unused)]
-fn remove_players(
+fn update_players(
     mut commands: Commands,
-    players: Query<(Entity, &Name, &Inventory), With<Player>>,
+    players: Query<
+        (Entity, &Name, &Inventory),
+        (With<Player>, Without<PlayerDead>, Without<PlayerSafe>),
+    >,
 ) {
     for (entity, name, inventory) in &players {
         if !inventory.is_alive() {
             bevy::log::info!("player dead: {name}");
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).insert(PlayerDead);
         }
         if inventory.is_safe() {
             bevy::log::info!("player safe: {name}");
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).insert(PlayerSafe);
         }
     }
 }
@@ -411,8 +443,8 @@ fn start_duel(
         assert!(x.inventory.is_alive());
         assert!(y.inventory.is_alive());
 
-        assert!(x.count_down.0 > 0);
-        assert!(y.count_down.0 > 0);
+        assert!(!x.timer.is_empty());
+        assert!(!y.timer.is_empty());
 
         let state = state.clone();
         let actors = [x.player.actor.clone(), y.player.actor.clone()];
@@ -424,7 +456,7 @@ fn start_duel(
 
 fn poll_duel(
     mut commands: Commands,
-    mut players: Query<(&mut Inventory, &mut CountDown), With<Player>>,
+    mut players: Query<(&mut Inventory, &mut PlayerTimer), With<Player>>,
     mut tables: Query<(Entity, &Table, &mut DuelTask), Without<Player>>,
 ) {
     for (entity, table, mut task) in &mut tables {
@@ -433,11 +465,11 @@ fn poll_duel(
                 Ok([m, n]) => {
                     if let Ok(mut x) = players.get_mut(table[0]) {
                         *x.0 = m;
-                        x.1 .0 -= 1;
+                        x.1.decrease();
                     }
                     if let Ok(mut y) = players.get_mut(table[1]) {
                         *y.0 = n;
-                        y.1 .0 -= 1;
+                        y.1.decrease();
                     }
                 }
                 Err(err) => bevy::log::warn!("duel error: {err}"),
@@ -452,7 +484,7 @@ pub struct PlayerData {
     pub entity: Entity,
     pub name: Name,
     pub inventory: Inventory,
-    pub count_down: CountDown,
+    pub timer: PlayerTimer,
 }
 
 impl<'a> From<PlayerQueryItem<'a>> for PlayerData {
@@ -461,7 +493,7 @@ impl<'a> From<PlayerQueryItem<'a>> for PlayerData {
             entity,
             name,
             inventory,
-            count_down,
+            timer,
             ..
         }: PlayerQueryItem<'a>,
     ) -> Self {
@@ -469,7 +501,7 @@ impl<'a> From<PlayerQueryItem<'a>> for PlayerData {
             entity,
             name: name.to_owned(),
             inventory: inventory.to_owned(),
-            count_down: count_down.to_owned(),
+            timer: *timer,
         }
     }
 }

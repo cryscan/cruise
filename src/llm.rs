@@ -354,19 +354,19 @@ impl LlmActor {
                 Role::actor(player.entity, &player.name),
                 "How much time do we left before game over?",
             ),
-            match player.count_down.0 {
+            match player.timer.0 {
                 0..=2 => ChatRecord::new(
                     Role::Assistant(player.entity),
                     format!(
                         include_str!("prompts/notify_5_0_ai.md"),
-                        player.count_down.0 * 10
+                        player.timer.0 * 10
                     ),
                 ),
                 _ => ChatRecord::new(
                     Role::Assistant(player.entity),
                     format!(
                         include_str!("prompts/notify_5_1_ai.md"),
-                        player.count_down.0 * 10
+                        player.timer.0 * 10
                     ),
                 ),
             },
