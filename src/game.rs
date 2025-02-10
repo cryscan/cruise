@@ -714,9 +714,9 @@ pub struct StakeState<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub enum DuelResult {
-    Tie,
-    Win,
-    Lose,
+    Tie(Card),
+    Win(Card, Card),
+    Lose(Card, Card),
 }
 
 #[allow(unused_variables)]
@@ -1133,12 +1133,12 @@ pub async fn duel(
                 [&mut p0, &mut p1][index].inventory.apply_stake(&stake);
                 match index {
                     0 => join!(
-                        a0.feedback_duel(&p0, DuelResult::Win),
-                        a1.feedback_duel(&p1, DuelResult::Lose)
+                        a0.feedback_duel(&p0, DuelResult::Win(lhs, rhs)),
+                        a1.feedback_duel(&p1, DuelResult::Lose(rhs, lhs))
                     ),
                     1 => join!(
-                        a0.feedback_duel(&p0, DuelResult::Lose),
-                        a1.feedback_duel(&p1, DuelResult::Win)
+                        a0.feedback_duel(&p0, DuelResult::Lose(lhs, rhs)),
+                        a1.feedback_duel(&p1, DuelResult::Win(rhs, lhs))
                     ),
                     _ => unreachable!(),
                 };
@@ -1147,8 +1147,8 @@ pub async fn duel(
                 p0.inventory.apply_stake(&s0);
                 p1.inventory.apply_stake(&s1);
                 join!(
-                    a0.feedback_duel(&p0, DuelResult::Tie),
-                    a1.feedback_duel(&p1, DuelResult::Tie)
+                    a0.feedback_duel(&p0, DuelResult::Tie(lhs)),
+                    a1.feedback_duel(&p1, DuelResult::Tie(lhs))
                 );
             }
         },

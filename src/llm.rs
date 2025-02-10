@@ -401,7 +401,8 @@ impl LlmActor {
                 format!("[notify][{}]", player.name),
                 role,
                 prompt,
-                " Based on the situation and your current status,",
+                // " Based on the situation and your current status,",
+                "",
                 "",
                 &["\n\n"],
                 player,
@@ -860,9 +861,9 @@ impl LlmActor {
 
     pub async fn feedback_duel<'a>(&'a mut self, player: &'a PlayerData, result: DuelResult) {
         let prompt = match result {
-            DuelResult::Tie => "It's a tie, you both draw the same card.",
-            DuelResult::Win => "You win!",
-            DuelResult::Lose => "You lose.",
+            DuelResult::Tie(card) => format!("It's a tie, you both draw \"{card}\" card."),
+            DuelResult::Win(this, that) => format!("\"{this}\" vs. \"{that}\". You win!"),
+            DuelResult::Lose(this, that) => format!("\"{this}\" vs. \"{that}\". You lose."),
         };
         let prompt = format!("Let's reveal duel result... {prompt}");
         self.chat
