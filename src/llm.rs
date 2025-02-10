@@ -375,14 +375,14 @@ impl LlmActor {
                 0..=2 => ChatRecord::new(
                     Role::Assistant(player.entity),
                     format!(
-                        include_str!("prompts/notify_5_0_ai.md"),
+                        include_str!("prompts/notify_5_1_ai.md"),
                         player.timer.0 * 10
                     ),
                 ),
                 _ => ChatRecord::new(
                     Role::Assistant(player.entity),
                     format!(
-                        include_str!("prompts/notify_5_1_ai.md"),
+                        include_str!("prompts/notify_5_0_ai.md"),
                         player.timer.0 * 10
                     ),
                 ),
@@ -492,7 +492,8 @@ impl LlmActor {
                 player.name,
                 opponent.name,
                 Self::prompt_compact(history),
-            );
+            )
+            .replace("\r\n", "\n");
             let record = self
                 .chat_llm(
                     format!("[trade][0][{}]", player.name),
@@ -516,7 +517,8 @@ impl LlmActor {
                 opponent.name,
                 Self::prompt_compact(history),
                 cot.trim(),
-            );
+            )
+            .replace("\r\n", "\n");
             let bnf_schema = include_str!("prompts/bnf_trade.txt");
             let sampler = Sampler {
                 top_p: 0.8,
