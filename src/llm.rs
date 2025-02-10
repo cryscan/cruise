@@ -515,7 +515,7 @@ impl LlmActor {
                 player.name,
                 opponent.name,
                 Self::prompt_compact(history),
-                cot,
+                cot.trim(),
             );
             let bnf_schema = include_str!("prompts/bnf_trade.txt");
             let sampler = Sampler {
