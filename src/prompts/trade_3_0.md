@@ -6,6 +6,6 @@ User: Below is a dialogue between {0} and {1} on trade of stars, coins and cards
 ```
 {2}
 ```
-Based on this dialogue, tell me what items {0} wants to take out to trade with {1}?
+Based on this dialogue, tell me what items {0} wants to give {1} in the trade?
 
 Assistant:
