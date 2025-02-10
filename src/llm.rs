@@ -409,7 +409,11 @@ impl LlmActor {
                 &["\n\n"],
                 player,
                 None,
-                Default::default(),
+                Sampler {
+                    kind: SamplerKind::Typical,
+                    temperature: 1.5,
+                    ..Default::default()
+                },
             )
             .await
         });
@@ -461,6 +465,7 @@ impl LlmActor {
             let prompt = Self::prompt_role(&self.chat, &role);
             let sampler = Sampler {
                 kind: SamplerKind::Typical,
+                temperature: 1.5,
                 ..Default::default()
             };
             self.chat_llm(
@@ -594,6 +599,7 @@ impl LlmActor {
             let prompt = Self::prompt_role(&self.chat, &role);
             let sampler = Sampler {
                 kind: SamplerKind::Typical,
+                temperature: 1.5,
                 ..Default::default()
             };
             self.chat_llm(
@@ -620,6 +626,7 @@ impl LlmActor {
             let prompt = Self::prompt_role(&self.chat, &role);
             let sampler = Sampler {
                 kind: SamplerKind::Typical,
+                temperature: 1.5,
                 ..Default::default()
             };
             let prefixes = [
@@ -679,6 +686,7 @@ impl LlmActor {
             let prompt = Self::prompt_role(&self.chat, &role);
             let sampler = Sampler {
                 kind: SamplerKind::Typical,
+                temperature: 1.5,
                 ..Default::default()
             };
             self.chat_llm(
@@ -741,6 +749,7 @@ impl LlmActor {
             let prompt = Self::prompt_role(&self.chat, &role);
             let sampler = Sampler {
                 kind: SamplerKind::Typical,
+                temperature: 1.5,
                 ..Default::default()
             };
             self.chat_llm(
@@ -787,6 +796,7 @@ impl LlmActor {
             let prompt = Self::prompt_role(&self.chat, &role);
             let sampler = Sampler {
                 kind: SamplerKind::Typical,
+                temperature: 1.5,
                 ..Default::default()
             };
             self.chat_llm(
@@ -877,6 +887,7 @@ impl LlmActor {
             let prompt = Self::prompt_role(&self.chat, &role);
             let sampler = Sampler {
                 kind: SamplerKind::Typical,
+                temperature: 1.5,
                 ..Default::default()
             };
             self.chat_llm(
