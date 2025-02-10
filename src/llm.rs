@@ -376,14 +376,16 @@ impl LlmActor {
                     Role::Assistant(player.entity),
                     format!(
                         include_str!("prompts/notify_5_1_ai.md"),
-                        player.timer.0 * 10
+                        player.timer.0 * 10,
+                        player.timer.0,
                     ),
                 ),
                 _ => ChatRecord::new(
                     Role::Assistant(player.entity),
                     format!(
                         include_str!("prompts/notify_5_0_ai.md"),
-                        player.timer.0 * 10
+                        player.timer.0 * 10,
+                        player.timer.0,
                     ),
                 ),
             },
