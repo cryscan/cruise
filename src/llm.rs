@@ -4,6 +4,7 @@ use anyhow::Result;
 use async_std::sync::Mutex;
 use bevy::{core::Name, utils::BoxedFuture};
 use derivative::Derivative;
+use futures::join;
 use itertools::Itertools;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -488,7 +489,7 @@ impl LlmActor {
     }
 
     pub async fn trade_item<'a>(
-        &'a mut self,
+        &'a self,
         player: &'a PlayerData,
         opponent: &'a OpponentData,
         history: &'a [ChatRecord],
@@ -557,7 +558,6 @@ impl LlmActor {
         opponent: &'a OpponentData,
         history: &'a [ChatRecord],
     ) -> Trade {
-        let mut trade = Trade::default();
         let Inventory {
             star,
             coin,
@@ -566,24 +566,22 @@ impl LlmActor {
             scissors,
         } = player.inventory.clone();
 
-        trade.star = self
-            .trade_item(player, opponent, history, "stars", 0..star)
-            .await;
-        trade.coin = self
-            .trade_item(player, opponent, history, "coins", 0..coin)
-            .await;
-        trade.rock = self
-            .trade_item(player, opponent, history, "rock cards", 0..rock)
-            .await;
-        trade.paper = self
-            .trade_item(player, opponent, history, "paper cards", 0..paper)
-            .await;
-        trade.scissors = self
-            .trade_item(player, opponent, history, "scissors cards", 0..scissors)
-            .await;
+        let (star, coin, rock, paper, scissors) = join!(
+            self.trade_item(player, opponent, history, "stars", 0..star),
+            self.trade_item(player, opponent, history, "coins", 0..coin),
+            self.trade_item(player, opponent, history, "rock cards", 0..rock),
+            self.trade_item(player, opponent, history, "paper cards", 0..paper),
+            self.trade_item(player, opponent, history, "scissors cards", 0..scissors)
+        );
 
+        let trade = Trade {
+            star,
+            coin,
+            rock,
+            paper,
+            scissors,
+        };
         bevy::log::info!("[trade][{}] {:?}", player.name, trade);
-
         trade
     }
 
