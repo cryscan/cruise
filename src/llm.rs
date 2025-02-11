@@ -525,8 +525,8 @@ impl LlmActor {
             record.content
         };
 
-        let choices = choices.map(|x| format!(" {x}")).collect_vec();
-        let choices = {
+        {
+            let choices = [" doesn't want to", " does not want to", " wants to"];
             let role = Role::Help(player.entity);
             let prompt = format!(
                 include_str!("prompts/trade_3_1.md"),
@@ -537,8 +537,35 @@ impl LlmActor {
                 cot.trim()
             )
             .replace("\r\n", "\n");
+            let choices = self
+                .choose_llm(
+                    format!("[trade][{}][1][{}]", item.as_ref(), player.name),
+                    role,
+                    prompt,
+                    &choices,
+                )
+                .await;
+            match choices[0].as_ref() {
+                " doesn't want to" | " does not want to" => return 0,
+                " wants to" => {}
+                _ => unreachable!(),
+            }
+        }
+
+        let choices = choices.map(|x| format!(" {x}")).collect_vec();
+        let choices = {
+            let role = Role::Help(player.entity);
+            let prompt = format!(
+                include_str!("prompts/trade_3_2.md"),
+                player.name,
+                opponent.name,
+                item.as_ref(),
+                Self::prompt_compact(history),
+                cot.trim()
+            )
+            .replace("\r\n", "\n");
             self.choose_llm(
-                format!("[trade][{}][1][{}]", item.as_ref(), player.name),
+                format!("[trade][{}][2][{}]", item.as_ref(), player.name),
                 role,
                 prompt,
                 &choices,
