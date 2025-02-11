@@ -487,74 +487,104 @@ impl LlmActor {
         public_records
     }
 
+    pub async fn trade_item<'a>(
+        &'a mut self,
+        player: &'a PlayerData,
+        opponent: &'a OpponentData,
+        history: &'a [ChatRecord],
+        item: impl AsRef<str> + 'a,
+        choices: impl Iterator<Item = usize> + 'a,
+    ) -> usize {
+        let cot = {
+            let role = Role::Think(player.entity);
+            let prompt = format!(
+                include_str!("prompts/trade_3_0.md"),
+                player.name,
+                opponent.name,
+                item.as_ref(),
+                Self::prompt_compact(history),
+            )
+            .replace("\r\n", "\n");
+            let record = self
+                .chat_llm(
+                    format!("[trade][{}][0][{}]", item.as_ref(), player.name),
+                    role,
+                    prompt,
+                    " In the dialogue provided,",
+                    "",
+                    &["\n\n"],
+                    player,
+                    None,
+                    Sampler {
+                        kind: SamplerKind::Typical,
+                        ..Default::default()
+                    },
+                )
+                .await;
+            record.content
+        };
+
+        let choices = choices.map(|x| format!(" {x}")).collect_vec();
+        let choices = {
+            let role = Role::Help(player.entity);
+            let prompt = format!(
+                include_str!("prompts/trade_3_1.md"),
+                player.name,
+                opponent.name,
+                item.as_ref(),
+                Self::prompt_compact(history),
+                cot.trim()
+            )
+            .replace("\r\n", "\n");
+            self.choose_llm(
+                format!("[trade][{}][1][{}]", item.as_ref(), player.name),
+                role,
+                prompt,
+                &choices,
+            )
+        }
+        .await
+        .into_iter()
+        .map(|x| x.trim().parse::<usize>().unwrap_or_default())
+        .collect_vec();
+
+        choices.first().copied().unwrap_or_default()
+    }
+
     pub async fn trade<'a>(
         &'a mut self,
         player: &'a PlayerData,
         opponent: &'a OpponentData,
         history: &'a [ChatRecord],
     ) -> Trade {
-        let cot = {
-            let role = Role::Transparent(player.entity);
-            let prompt = format!(
-                include_str!("prompts/trade_3_0.md"),
-                player.name,
-                opponent.name,
-                Self::prompt_compact(history),
-            )
-            .replace("\r\n", "\n");
-            let record = self
-                .chat_llm(
-                    format!("[trade][0][{}]", player.name),
-                    role,
-                    prompt,
-                    " Let's think step by step.",
-                    "",
-                    &["\n\n"],
-                    player,
-                    None,
-                    Default::default(),
-                )
-                .await;
-            record.content
-        };
-        loop {
-            let role = Role::Transparent(player.entity);
-            let prompt = format!(
-                include_str!("prompts/trade_3_1.md"),
-                player.name,
-                opponent.name,
-                Self::prompt_compact(history),
-                cot.trim(),
-            )
-            .replace("\r\n", "\n");
-            let bnf_schema = include_str!("prompts/bnf_trade.txt");
-            let sampler = Sampler {
-                top_p: 0.8,
-                presence_penalty: 0.0,
-                frequency_penalty: 0.0,
-                ..Default::default()
-            };
-            let record = self
-                .chat_llm(
-                    format!("[trade][1][{}]", player.name),
-                    role,
-                    prompt,
-                    "",
-                    bnf_schema,
-                    &["\n\n"],
-                    player,
-                    None,
-                    sampler,
-                )
-                .await;
-            match serde_json::from_str::<Trade>(&record.content) {
-                Ok(trade) => break trade.normalize(&player.inventory),
-                Err(err) => {
-                    bevy::log::error!("{err}");
-                    continue;
-                }
-            };
-        }
+        let mut trade = Trade::default();
+        let Inventory {
+            star,
+            coin,
+            rock,
+            paper,
+            scissors,
+        } = player.inventory.clone();
+
+        trade.star = self
+            .trade_item(player, opponent, history, "stars", 0..star)
+            .await;
+        trade.coin = self
+            .trade_item(player, opponent, history, "coins", 0..coin)
+            .await;
+        trade.rock = self
+            .trade_item(player, opponent, history, "rock cards", 0..rock)
+            .await;
+        trade.paper = self
+            .trade_item(player, opponent, history, "paper cards", 0..paper)
+            .await;
+        trade.scissors = self
+            .trade_item(player, opponent, history, "scissors cards", 0..scissors)
+            .await;
+
+        bevy::log::info!("[trade][{}] {:?}", player.name, trade);
+
+        trade
     }
 
     pub async fn accept_trade<'a>(
@@ -816,7 +846,7 @@ impl LlmActor {
         self.chat.push(record);
 
         let card = {
-            let role = Role::Transparent(player.entity);
+            let role = Role::Help(player.entity);
             let prompt = Self::prompt_compact(&history);
             let prompt = format!(
                 include_str!("prompts/duel_3.md"),

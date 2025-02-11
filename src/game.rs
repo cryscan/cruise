@@ -642,7 +642,8 @@ pub enum Role {
     #[default]
     None,
     System(Entity),
-    Transparent(Entity),
+    Think(Entity),
+    Help(Entity),
     Assistant(Entity),
     Actor(Entity, String),
 }
@@ -658,7 +659,8 @@ impl Display for Role {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Role::None => write!(f, ""),
-            Role::Transparent(_) => write!(f, ""),
+            Role::Think(_) => write!(f, ""),
+            Role::Help(_) => write!(f, ""),
             Role::System(_) => write!(f, "{SYSTEM_NAME}",),
             Role::Assistant(_) => write!(f, "{ASSISTANT_NAME}",),
             Role::Actor(_, name) => write!(f, "{name}"),
