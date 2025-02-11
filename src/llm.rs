@@ -526,7 +526,14 @@ impl LlmActor {
         };
 
         {
-            let choices = [" doesn't want to", " does not want to", " wants to"];
+            let unclear = format!(
+                " we cannot determine how many {} {} wants to",
+                item.as_ref(),
+                player.name
+            );
+            let zero = format!(" we can infer that {} does not want to", player.name);
+            let positive = format!(" we can infer that {} wants to", player.name);
+            let choices = [&unclear, &zero, &positive];
             let role = Role::Help(player.entity);
             let prompt = format!(
                 include_str!("prompts/trade_3_1.md"),
@@ -545,9 +552,10 @@ impl LlmActor {
                     &choices,
                 )
                 .await;
-            match choices[0].as_ref() {
-                " doesn't want to" | " does not want to" => return 0,
-                " wants to" => {}
+            match &choices[0] {
+                x if x == &unclear => return 0,
+                x if x == &zero => return 0,
+                x if x == &positive => {}
                 _ => unreachable!(),
             }
         }

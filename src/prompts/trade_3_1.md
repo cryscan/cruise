@@ -12,4 +12,4 @@ Assistant: {4}
 
 User: Please tell me the exact number how many {3} {0} wants to give {1}.
 
-Assistant: Based on the dialogue, {0}
+Assistant: Based on the dialogue,
