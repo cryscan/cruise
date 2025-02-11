@@ -10,6 +10,6 @@ Based on this dialogue, tell me how many {3} {0} wants to offer {1} in the trade
 
 Assistant: {4}
 
-User: Please tell me the exact number how many {3} {0} wants to give {1}.
+User: Please tell me the exact number how many {3} {0} wants to give {1}. If {0} doesn't want to offer {1} any {3}, the number should be 0; otherwise, tell me that number.
 
 Assistant: Based on the dialogue, {0} wants to offer {1}
