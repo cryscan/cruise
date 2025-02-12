@@ -16,22 +16,44 @@ struct Args {
     #[arg(long, default_value = "http://localhost:65530")]
     url: String,
     #[arg(long, short, default_value = "./output")]
-    out: PathBuf,
+    output: PathBuf,
+    #[arg(long, default_value = "64")]
+    num_players: usize,
+    #[arg(long, default_value = "16")]
+    max_rounds: usize,
 }
 
 #[derive(Debug, Clone, Resource, Reflect)]
 pub struct Settings {
+    /// Base URL for the LLM API.
     pub url: String,
+    /// Output directory.
     pub output: PathBuf,
+    /// Number of players in the game.
+    pub num_players: usize,
+    /// Maximum rounds a player can play.
+    pub max_rounds: usize,
 }
 
 fn main() {
-    let Args { url, out } = Args::parse();
+    let Args {
+        url,
+        output,
+        num_players,
+        max_rounds,
+    } = Args::parse();
+
+    let settings = Settings {
+        url,
+        output,
+        num_players,
+        max_rounds,
+    };
 
     App::new()
         .add_plugins((DefaultPlugins, AsyncEcsPlugin, WorldInspectorPlugin::new()))
         .add_plugins(GamePlugin)
         .register_type::<Settings>()
-        .insert_resource(Settings { url, output: out })
+        .insert_resource(settings)
         .run();
 }

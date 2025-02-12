@@ -20,10 +20,7 @@ use thiserror::Error;
 
 use crate::{llm::LlmActor, Settings};
 
-pub const NUM_PLAYERS: usize = 16;
-pub const MIN_MATCH_PLAYERS: usize = 2;
-pub const MAX_ROUNDS: usize = 16;
-pub const NUM_CHAT_ROUNDS: usize = 4;
+pub const NUM_CHAT_ROUNDS: usize = 6;
 pub const MAX_TRAIL_ROUNDS: usize = 3;
 
 pub const SYSTEM_NAME: &str = "System";
@@ -362,14 +359,19 @@ struct PlayerQuery {
 
 fn setup_scene(mut commands: Commands, settings: Res<Settings>) {
     let names = NAMES.split("\n").map(|x| x.trim()).collect_vec();
-    let Settings { url, output } = settings.clone();
-    commands.spawn_batch((0..NUM_PLAYERS).map(move |index| {
+    let Settings {
+        url,
+        output,
+        num_players,
+        max_rounds,
+    } = settings.clone();
+    commands.spawn_batch((0..num_players).map(move |index| {
         (
             Name::new(names[index]),
             Player::new(LlmActor::new(url.clone(), output.clone())),
             // Player::new(DummyActor),
             Inventory::default(),
-            PlayerTimer(MAX_ROUNDS),
+            PlayerTimer(max_rounds),
         )
     }));
 

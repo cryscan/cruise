@@ -11,7 +11,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use crate::game::{
     Actor, Card, ChatKind, ChatRecord, DuelResult, DummyActor, Inventory, OpponentData, PlayerData,
     PublicState, Role, Stake, StakeState, Trade, TradeState, ASSISTANT_NAME, NUM_CHAT_ROUNDS,
-    NUM_PLAYERS, SYSTEM_NAME,
+    SYSTEM_NAME,
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -337,7 +337,7 @@ impl LlmActor {
                 Role::Assistant(player.entity),
                 format!(
                     include_str!("prompts/notify_1_ai.md"),
-                    num_players = NUM_PLAYERS,
+                    num_players = state.player,
                 ),
             ),
             ChatRecord::new(
