@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use async_std::sync::Mutex;
@@ -49,6 +49,7 @@ pub struct CompletionRequest {
     pub state: uuid::Uuid,
     pub stop: Vec<String>,
     pub stream: bool,
+    pub bias: HashMap<u16, f32>,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub bnf_schema: String,
     #[derivative(Default(value = "1024"))]
@@ -187,6 +188,7 @@ impl LlmActor {
         prefix: impl AsRef<str>,
         bnf_schema: impl AsRef<str>,
         stop: &[impl AsRef<str>],
+        bias: &[(u16, f32)],
         player: Option<&PlayerData>,
         opponent: Option<&OpponentData>,
         sampler: Sampler,
@@ -200,18 +202,12 @@ impl LlmActor {
 
             let mut stop = stop.iter().map(|x| x.as_ref().to_string()).collect_vec();
             stop.extend([
-                "\n\n".into(),
-                format!("\n{}", ASSISTANT_NAME),
                 format!("{}:", ASSISTANT_NAME),
-                format!("\n{}", SYSTEM_NAME),
                 format!("{}:", SYSTEM_NAME),
                 "\nUser:".into(),
                 "\nQ:".into(),
                 "\nAssistant:".into(),
                 "\nAI:".into(),
-                "\n{".into(),
-                "\n[".into(),
-                "\n<".into(),
             ]);
             if let Some(player) = player {
                 stop.extend([
@@ -231,10 +227,13 @@ impl LlmActor {
                 ]);
             }
 
+            let bias = bias.iter().cloned().collect();
+
             let request = CompletionRequest {
                 prompt: format!("{prompt}{prefix}"),
                 state: self.state,
                 stop,
+                bias,
                 sampler,
                 bnf_schema,
                 ..Default::default()
@@ -410,6 +409,7 @@ impl LlmActor {
                 "",
                 "",
                 &["\n\n"],
+                &[(59, -1.0e30)],
                 Some(player),
                 None,
                 Sampler {
@@ -477,7 +477,8 @@ impl LlmActor {
                 prompt,
                 "",
                 "",
-                &["\n"],
+                &["\n\n", "\n"],
+                &[],
                 Some(player),
                 Some(opponent),
                 sampler,
@@ -516,6 +517,7 @@ impl LlmActor {
                     " In the dialogue provided,",
                     "",
                     &["\n\n"],
+                    &[],
                     None,
                     None,
                     Sampler {
@@ -674,7 +676,8 @@ impl LlmActor {
                 prompt,
                 "",
                 "",
-                &["\n"],
+                &["\n\n", "\n"],
+                &[],
                 Some(player),
                 Some(opponent),
                 sampler,
@@ -712,7 +715,8 @@ impl LlmActor {
                 prompt,
                 fastrand::choice(&prefixes).unwrap(),
                 "start ::= \"Yes\\\".\" | \"No\\\".\";",
-                &["\n"],
+                &["\n\n", "\n"],
+                &[],
                 Some(player),
                 Some(opponent),
                 sampler,
@@ -761,7 +765,8 @@ impl LlmActor {
                 prompt,
                 "",
                 "",
-                &["\n"],
+                &["\n\n", "\n"],
+                &[],
                 Some(player),
                 None,
                 sampler,
@@ -802,6 +807,7 @@ impl LlmActor {
                 " Let's analyze the situation.",
                 "",
                 &["\n\n"],
+                &[],
                 Some(player),
                 Some(opponent),
                 Default::default(),
@@ -824,7 +830,8 @@ impl LlmActor {
                 prompt,
                 "",
                 "",
-                &["\n"],
+                &["\n\n", "\n"],
+                &[],
                 Some(player),
                 None,
                 sampler,
@@ -872,7 +879,8 @@ impl LlmActor {
                 prompt,
                 "",
                 "",
-                &["\n"],
+                &["\n\n", "\n"],
+                &[],
                 Some(player),
                 None,
                 sampler,
@@ -963,7 +971,8 @@ impl LlmActor {
                 prompt,
                 "",
                 "",
-                &["\n"],
+                &["\n\n", "\n"],
+                &[],
                 Some(player),
                 None,
                 sampler,
