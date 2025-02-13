@@ -24,6 +24,7 @@ struct Args {
 }
 
 #[derive(Debug, Clone, Resource, Reflect)]
+#[reflect(Resource)]
 pub struct Settings {
     /// Base URL for the LLM API.
     pub url: String,

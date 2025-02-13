@@ -106,7 +106,7 @@ pub struct LlmRecord {
     pub response: CompletionResponse,
 
     pub record: ChatRecord,
-    pub player: PlayerData,
+    pub player: Option<PlayerData>,
     pub opponent: Option<OpponentData>,
 }
 
@@ -187,7 +187,7 @@ impl LlmActor {
         prefix: impl AsRef<str>,
         bnf_schema: impl AsRef<str>,
         stop: &[impl AsRef<str>],
-        player: &PlayerData,
+        player: Option<&PlayerData>,
         opponent: Option<&OpponentData>,
         sampler: Sampler,
     ) -> ChatRecord {
@@ -213,12 +213,14 @@ impl LlmActor {
                 "\n[".into(),
                 "\n<".into(),
             ]);
-            stop.extend([
-                format!("\n{}", player.name),
-                format!("\n*{}", player.name),
-                format!("\n**{}", player.name),
-                format!("{}:", player.name),
-            ]);
+            if let Some(player) = player {
+                stop.extend([
+                    format!("\n{}", player.name),
+                    format!("\n*{}", player.name),
+                    format!("\n**{}", player.name),
+                    format!("{}:", player.name),
+                ]);
+            }
             if let Some(opponent) = opponent {
                 stop.extend([
                     format!("\n{}", opponent.name),
@@ -260,7 +262,7 @@ impl LlmActor {
 
             {
                 let record = record.clone();
-                let player = player.clone();
+                let player = player.cloned();
                 let opponent = opponent.cloned();
                 self.history.lock().await.push(LlmRecord {
                     request,
@@ -408,7 +410,7 @@ impl LlmActor {
                 "",
                 "",
                 &["\n\n"],
-                player,
+                Some(player),
                 None,
                 Sampler {
                     kind: SamplerKind::Typical,
@@ -476,7 +478,7 @@ impl LlmActor {
                 "",
                 "",
                 &["\n"],
-                player,
+                Some(player),
                 Some(opponent),
                 sampler,
             )
@@ -514,7 +516,7 @@ impl LlmActor {
                     " In the dialogue provided,",
                     "",
                     &["\n\n"],
-                    player,
+                    None,
                     None,
                     Sampler {
                         kind: SamplerKind::Typical,
@@ -657,6 +659,7 @@ impl LlmActor {
             ),
         ]);
 
+        // player reacts to the contract
         self.chat.push({
             let role = Role::actor(player.entity, &player.name);
             let prompt = Self::prompt_role(&self.chat, &role);
@@ -666,13 +669,13 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
-                "[trade][2][accept]",
+                "[trade][accept]",
                 role,
                 prompt,
                 "",
                 "",
                 &["\n"],
-                player,
+                Some(player),
                 Some(opponent),
                 sampler,
             )
@@ -704,13 +707,13 @@ impl LlmActor {
                 " I give my response with a \"",
             ];
             self.chat_llm(
-                "[trade][3][accept][confirm]",
+                "[trade][accept][confirm]",
                 role,
                 prompt,
                 fastrand::choice(&prefixes).unwrap(),
                 "start ::= \"Yes\\\".\" | \"No\\\".\";",
                 &["\n"],
-                player,
+                Some(player),
                 Some(opponent),
                 sampler,
             )
@@ -753,13 +756,13 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
-                "[trade][4][feedback]",
+                "[trade][feedback]",
                 role,
                 prompt,
                 "",
                 "",
                 &["\n"],
-                player,
+                Some(player),
                 None,
                 sampler,
             )
@@ -799,7 +802,7 @@ impl LlmActor {
                 " Let's analyze the situation.",
                 "",
                 &["\n\n"],
-                player,
+                Some(player),
                 Some(opponent),
                 Default::default(),
             )
@@ -822,7 +825,7 @@ impl LlmActor {
                 "",
                 "",
                 &["\n"],
-                player,
+                Some(player),
                 None,
                 sampler,
             )
@@ -854,6 +857,7 @@ impl LlmActor {
         // history.push(record.clone());
         self.chat.push(record);
 
+        // player prepares action
         let record = {
             let role = Role::actor(player.entity, &player.name);
             let prompt = Self::prompt_role(&self.chat, &role);
@@ -863,13 +867,13 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
-                "[duel][0][accept]",
+                "[duel][accept]",
                 role,
                 prompt,
                 "",
                 "",
                 &["\n"],
-                player,
+                Some(player),
                 None,
                 sampler,
             )
@@ -894,7 +898,7 @@ impl LlmActor {
             let choices = deck.into_iter().map(|card| card.to_string()).collect_vec();
             let choices = self
                 .choose_llm(
-                    format!("[duel][1][accept][{}]", player.name),
+                    format!("[duel][card][{}]", player.name),
                     role,
                     prompt,
                     &choices,
@@ -954,13 +958,13 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
-                "[duel][2][feedback]",
+                "[duel][feedback]",
                 role,
                 prompt,
                 "",
                 "",
                 &["\n"],
-                player,
+                Some(player),
                 None,
                 sampler,
             )
