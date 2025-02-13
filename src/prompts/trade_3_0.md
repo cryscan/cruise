@@ -6,6 +6,6 @@ User: Below is a dialogue between {0} and {1} on trade of stars, coins and cards
 ```
 {3}
 ```
-Based on this dialogue, tell me how many {3} {0} wants to offer {1} in the trade?
+Based on this dialogue, tell me how many {2} {0} wants to offer {1} in the trade?
 
 Assistant:
