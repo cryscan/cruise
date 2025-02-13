@@ -445,13 +445,19 @@ impl LlmActor {
 
         // player starts negotiation
         if round == 0 || round == 1 {
-            self.chat.push(ChatRecord::new(
-                Role::Assistant(player.entity),
-                format!(
-                    include_str!("prompts/trade_0.md"),
-                    opponent.name, opponent.star, opponent.card
+            self.chat.extend([
+                ChatRecord::new(
+                    Role::System(player.entity),
+                    format!("*{} joins chat*", opponent.name),
                 ),
-            ));
+                ChatRecord::new(
+                    Role::Assistant(player.entity),
+                    format!(
+                        include_str!("prompts/trade_0.md"),
+                        opponent.name, opponent.star, opponent.card
+                    ),
+                ),
+            ]);
         }
 
         // system notifies last round
@@ -488,6 +494,13 @@ impl LlmActor {
         public_records.push(record.clone());
         self.chat.push(record);
 
+        if round == (NUM_CHAT_ROUNDS - 1) * 2 || round == (NUM_CHAT_ROUNDS - 1) * 2 + 1 {
+            self.chat.push(ChatRecord::new(
+                Role::System(player.entity),
+                format!("*{} leaves chat*", opponent.name),
+            ));
+        }
+
         public_records
     }
 
@@ -495,100 +508,54 @@ impl LlmActor {
         &'a self,
         player: &'a PlayerData,
         opponent: &'a OpponentData,
-        history: &'a [ChatRecord],
+        _history: &'a [ChatRecord],
         item: impl AsRef<str> + 'a,
         choices: impl Iterator<Item = usize> + 'a,
     ) -> usize {
-        let cot = {
-            let role = Role::Think(player.entity);
-            let prompt = format!(
-                include_str!("prompts/trade_3_0.md"),
-                player.name,
-                opponent.name,
-                item.as_ref(),
-                Self::prompt_compact(history),
-            )
-            .replace("\r\n", "\n");
-            let record = self
-                .chat_llm(
-                    format!("[trade][{}][0][{}]", item.as_ref(), player.name),
-                    role,
-                    prompt,
-                    " In the dialogue provided,",
-                    "",
-                    &["\n\n"],
-                    &[],
-                    None,
-                    None,
-                    Sampler {
-                        kind: SamplerKind::Typical,
-                        ..Default::default()
-                    },
-                )
-                .await;
-            record.content
-        };
+        let item = item.as_ref();
+
+        let mut chat = self.chat.clone();
+        chat.push(ChatRecord::new(
+            Role::Assistant(player.entity),
+            format!(include_str!("prompts/trade_3_1.md"), opponent.name, item),
+        ));
+
+        let role = Role::actor(player.entity, &player.name);
+        let prompt = Self::prompt_role(&chat, &role);
 
         {
-            let unclear = format!(
-                " we cannot determine how many {} {} wants to",
-                item.as_ref(),
-                player.name
-            );
-            let zero = format!(" we can infer that {} does not want to", player.name);
-            let positive = format!(" we can infer that {} wants to", player.name);
-            let choices = [&unclear, &zero, &positive];
-            let role = Role::Help(player.entity);
-            let prompt = format!(
-                include_str!("prompts/trade_3_1.md"),
-                player.name,
-                opponent.name,
-                item.as_ref(),
-                Self::prompt_compact(history),
-                cot.trim()
-            )
-            .replace("\r\n", "\n");
+            let choices = [" No, I don't want to", " Yes, I want to"];
             let choices = self
                 .choose_llm(
-                    format!("[trade][{}][1][{}]", item.as_ref(), player.name),
-                    role,
-                    prompt,
+                    format!("[trade][{item}][{}][0]", player.name),
+                    role.clone(),
+                    &prompt,
                     &choices,
                 )
                 .await;
-            match &choices[0] {
-                x if x == &unclear => return 0,
-                x if x == &zero => return 0,
-                x if x == &positive => {}
+            match choices[0].as_ref() {
+                " No, I don't want to" => return 0,
+                " Yes, I want to" => {}
                 _ => unreachable!(),
             }
         }
 
+        let prompt = format!("{prompt} Yes, I want to offer {}", opponent.name);
         let choices = choices.map(|x| format!(" {x}")).collect_vec();
-        let choices = {
-            let role = Role::Help(player.entity);
-            let prompt = format!(
-                include_str!("prompts/trade_3_2.md"),
-                player.name,
-                opponent.name,
-                item.as_ref(),
-                Self::prompt_compact(history),
-                cot.trim()
-            )
-            .replace("\r\n", "\n");
-            self.choose_llm(
-                format!("[trade][{}][2][{}]", item.as_ref(), player.name),
+        let choices = self
+            .choose_llm(
+                format!("[trade][{item}][{}][1]", player.name),
                 role,
                 prompt,
                 &choices,
             )
-        }
-        .await
-        .into_iter()
-        .map(|x| x.trim().parse::<usize>().unwrap_or_default())
-        .collect_vec();
+            .await;
 
-        choices.first().copied().unwrap_or_default()
+        choices
+            .into_iter()
+            .map(|x| x.trim().parse::<usize>().expect("cannot parse the result"))
+            .next()
+            .unwrap_or(0)
     }
 
     pub async fn trade<'a>(
@@ -597,6 +564,34 @@ impl LlmActor {
         opponent: &'a OpponentData,
         history: &'a [ChatRecord],
     ) -> Trade {
+        self.chat.push(ChatRecord::new(
+            Role::Assistant(player.entity),
+            format!(include_str!("prompts/trade_3_0.md"), opponent.name),
+        ));
+
+        self.chat.push({
+            let role = Role::actor(player.entity, &player.name);
+            let prompt = Self::prompt_role(&self.chat, &role);
+            let sampler = Sampler {
+                kind: SamplerKind::Typical,
+                temperature: 1.5,
+                ..Default::default()
+            };
+            self.chat_llm(
+                "[trade][summarize]",
+                role,
+                prompt,
+                "",
+                "",
+                &["\n\n", "\n"],
+                &[],
+                Some(player),
+                Some(opponent),
+                sampler,
+            )
+            .await
+        });
+
         let Inventory {
             star,
             coin,

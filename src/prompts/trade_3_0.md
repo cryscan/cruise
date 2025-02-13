@@ -1,11 +1,1 @@
-User: Hi!
-
-Assistant: Hello, how can I assist you?
-
-User: Below is a dialogue between {0} and {1} on trade of stars, coins and cards (of 3 types: rock, paper, scissors), please tell me how many {2} {0} wants to offer {1} in the trade:
-```
-{3}
-```
-Based on this dialogue, tell me how many {2} {0} wants to offer {1} in the trade?
-
-Assistant:
+Negotiation ended, Owner. How was it going? What items would you like to offer in your trade with {}?
