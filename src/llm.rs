@@ -80,6 +80,7 @@ pub struct ChooseRequest {
     pub prompt: String,
     pub state: uuid::Uuid,
     pub choices: Vec<String>,
+    pub calibrate: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -303,6 +304,7 @@ impl LlmActor {
                 prompt,
                 state: self.state,
                 choices,
+                calibrate: true,
             };
             let response: ChooseResponse = match self
                 .call_llm(format!("{}/api/oai/chooses", self.url), &request)
