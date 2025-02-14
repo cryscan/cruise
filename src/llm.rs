@@ -392,7 +392,7 @@ impl LlmActor {
             ),
             ChatRecord::new(
                 Role::actor(player.entity, &player.name),
-                "How much time do we left before game over?",
+                "How much time do we left before the game is over?",
             ),
             match player.timer.0 {
                 0..=2 => ChatRecord::new(
@@ -968,7 +968,7 @@ impl LlmActor {
             DuelResult::Win(this, that) => format!("\"{this}\" vs. \"{that}\". You win!"),
             DuelResult::Lose(this, that) => format!("\"{this}\" vs. \"{that}\". You lose."),
         };
-        let prompt = format!("Let's reveal duel result... {prompt}");
+        let prompt = format!("Let's reveal the duel result... {prompt}");
         self.chat
             .push(ChatRecord::new(Role::System(player.entity), prompt));
 

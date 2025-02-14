@@ -1,1 +1,1 @@
-Do you think this contract is a representative of your intention, Owner?
+Do you think this contract is representative of your intention, Owner?

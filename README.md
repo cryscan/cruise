@@ -24,4 +24,16 @@ The rules:
 
 1. Launch [Ai00 Server](https://github.com/Ai00-X/ai00_server) locally, load the model.
 2. Launch this program and wait.
-3. Outputs are dumped into `./output/`
+3. Outputs are dumped into `./output/`.
+
+## Example Rollout
+
+Here is an example rollout for one round. Note that
+
+- Green underlined words are filled by the program;
+- Yellow lines are AI generated for the assistant role `Stellaris (AI)`;
+- Red lines are AI generated for the opponent role;
+- Blue lines are AI generated for the player role;
+- This example doesn't include branches when the player role makes decisions.
+
+![rollout](rollout.png)

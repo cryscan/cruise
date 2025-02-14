@@ -1,1 +1,1 @@
-So, my dear {}, any advices on our best strategy to win?
+So, my dear {}, any advice on our best strategy to win?
