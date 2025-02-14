@@ -544,10 +544,10 @@ impl LlmActor {
 
         {
             let choices = [
-                " Actually I don't want to",
-                " Actually I would like to",
-                " Hmm... Actually I don't want to",
-                " Hmm... I would like to",
+                " I think I wouldn't like to",
+                " I would like to",
+                " Hmm... I think I wouldn't like to",
+                " Hmm... I wouldn't like to",
             ];
             let choices = self
                 .choose_llm(
@@ -558,8 +558,8 @@ impl LlmActor {
                 )
                 .await;
             match choices[0].as_ref() {
-                " Actually I don't want to" | " Hmm... Actually I don't want to" => return 0,
-                " Actually I would like to" | " Hmm... I would like to" => {}
+                " I think I wouldn't like to" | " Hmm... I think I wouldn't like to" => return 0,
+                " I would like to" | " Hmm... I would like to" => {}
                 _ => unreachable!(),
             }
         }
@@ -729,7 +729,7 @@ impl LlmActor {
                 " I give my response with a \"",
             ];
             self.chat_llm(
-                "[trade][accept][confirm]",
+                "[trade][confirm]",
                 &role,
                 prompt,
                 fastrand::choice(&prefixes).unwrap(),
@@ -893,7 +893,7 @@ impl LlmActor {
                 ..Default::default()
             };
             self.chat_llm(
-                "[duel][accept]",
+                "[duel][prepare]",
                 &role,
                 prompt,
                 "",
@@ -909,60 +909,55 @@ impl LlmActor {
         history.push(record.clone());
         self.chat.push(record);
 
-        let card = {
-            let role = Role::Help(player.entity);
-            let prompt = Self::prompt_compact(&history);
-            let prompt = format!(
-                include_str!("prompts/duel_3.md"),
-                opponent.name, player.name, prompt
-            );
-            let deck = [
-                vec![Card::Rock; player.inventory.rock.min(1)],
-                vec![Card::Paper; player.inventory.paper.min(1)],
-                vec![Card::Scissors; player.inventory.scissors.min(1)],
-            ]
-            .concat();
-            let choices = deck.into_iter().map(|card| card.to_string()).collect_vec();
-            let choices = self
-                .choose_llm(
-                    format!("[duel][card][{}]", player.name),
-                    &role,
-                    prompt,
-                    &choices,
-                )
-                .await;
-            match choices.first().map(|x| x.as_ref()) {
-                Some("Rock") => Some(Card::Rock),
-                Some("Paper") => Some(Card::Paper),
-                Some("Scissors") => Some(Card::Scissors),
-                _ => None,
-            }
-        };
-
         self.chat.push(ChatRecord::new(
             Role::Assistant(player.entity),
             include_str!("prompts/duel_4.md"),
         ));
 
-        if let Some(card) = card {
+        let deck = [
+            vec![Card::Rock; player.inventory.rock.min(1)],
+            vec![Card::Paper; player.inventory.paper.min(1)],
+            vec![Card::Scissors; player.inventory.scissors.min(1)],
+        ]
+        .concat();
+        let choices = deck.into_iter().map(|card| card.to_string()).collect_vec();
+
+        if !choices.is_empty() {
+            let role = Role::actor(player.entity, &player.name);
+            let prefixes = [
+                " Ok, the card I wish to draw is \"",
+                " All right, the card I'm drawing is \"",
+                " Fine, the card I draw turns out to be \"",
+            ];
+            let prefix = fastrand::choice(&prefixes).unwrap();
+            let prompt = Self::prompt_role(&self.chat, &role);
+            let choices = self
+                .choose_llm(
+                    "[duel][confirm]",
+                    &role,
+                    format!("{prompt}{prefix}"),
+                    &choices,
+                )
+                .await;
+            let card = match choices[0].as_ref() {
+                "Rock" => Card::Rock,
+                "Paper" => Card::Paper,
+                "Scissors" => Card::Scissors,
+                _ => unreachable!(),
+            };
             self.chat.push({
-                let role = Role::actor(player.entity, &player.name);
-                let prompts = [
-                    format!("Ok, the card I draw is \"{card}\"."),
-                    format!("All right, the card I'm drawing is \"{card}\"."),
-                    format!("Fine, the card I draw turns out to be \"{card}\"."),
-                ];
-                ChatRecord::new(role, fastrand::choice(&prompts).unwrap())
+                let content = format!("{prefix}{card}\".");
+                ChatRecord::new(role, content)
             });
+            Some(card)
         } else {
             self.chat.push({
                 let role = Role::actor(player.entity, &player.name);
-                let prompts = [format!("I don't want to duel with {}.", opponent.name)];
-                ChatRecord::new(role, fastrand::choice(&prompts).unwrap())
+                let content = format!(" I don't want to duel with {}.", opponent.name);
+                ChatRecord::new(role, content)
             });
+            None
         }
-
-        card
     }
 
     pub async fn feedback_duel<'a>(&'a mut self, player: &'a PlayerData, result: DuelResult) {
