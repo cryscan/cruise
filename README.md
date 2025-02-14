@@ -24,7 +24,12 @@ The rules:
 
 1. Launch [Ai00 Server](https://github.com/Ai00-X/ai00_server) locally, load the model.
 2. Launch this program and wait.
-3. Outputs are dumped into `./output/`.
+3. Outputs are dumped into `./output/` after the game finishes. The outputs include all LLM calls and corresponding game states.
+
+### Notes for the UI
+
+I don't have time to implement a visualization yet.
+Only an inspector with players and their resources are shown.
 
 ## Example Rollout
 
@@ -37,3 +42,5 @@ Here is an example rollout for one round. Note that
 - This example doesn't include branches when the player role makes decisions.
 
 ![rollout](rollout.png)
+
+The above is an example of RWKV V7 2.9B rollout. The model has not been tuned for gaming yet so I didn't expect it to understand the rules deeply. However I believe that after enough rollout being collected, an RL algorithm can be used in training different roles, and finally it is possible to get a helpful `Stellaris (AI)`, and an experienced player.
