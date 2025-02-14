@@ -548,7 +548,7 @@ impl LlmActor {
             let choices = [
                 " I think I wouldn't like to",
                 " I would like to",
-                " Hmm... I think I wouldn't like to",
+                " Hmm... I think I would like to",
                 " Hmm... I wouldn't like to",
             ];
             let choices = self
@@ -560,8 +560,8 @@ impl LlmActor {
                 )
                 .await;
             match choices[0].as_ref() {
-                " I think I wouldn't like to" | " Hmm... I think I wouldn't like to" => return 0,
-                " I would like to" | " Hmm... I would like to" => {}
+                " I think I wouldn't like to" | " Hmm... I wouldn't like to" => return 0,
+                " I would like to" | " Hmm... I think I would like to" => {}
                 _ => unreachable!(),
             }
         }
