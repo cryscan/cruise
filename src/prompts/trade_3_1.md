@@ -1,1 +1,1 @@
-Would you like to offer {1} in the trade with {0}, and if the answer is "Yes", then how many?
+So tell me exactly how many {1} would you like to offer {0} in the trade?

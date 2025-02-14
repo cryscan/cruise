@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     fmt::Display,
     ops::{Add, Not},
     sync::Arc,
@@ -647,12 +648,13 @@ pub enum Role {
     Think(Entity),
     Help(Entity),
     Assistant(Entity),
-    Actor(Entity, String),
+    Actor(Entity, Cow<'static, str>),
 }
 
 impl Role {
     pub fn actor(entity: Entity, name: impl AsRef<str>) -> Self {
-        let name = name.as_ref().trim().to_owned();
+        let name = name.as_ref().trim();
+        let name = Cow::Owned(name.to_owned());
         Self::Actor(entity, name)
     }
 }

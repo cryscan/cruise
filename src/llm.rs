@@ -102,13 +102,19 @@ pub struct Choice {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LlmRecord {
-    pub request: CompletionRequest,
-    pub response: CompletionResponse,
-
-    pub record: ChatRecord,
-    pub player: Option<PlayerData>,
-    pub opponent: Option<OpponentData>,
+pub enum LlmRecord {
+    Completion {
+        role: Role,
+        player: Option<PlayerData>,
+        opponent: Option<OpponentData>,
+        request: Box<CompletionRequest>,
+        response: Box<CompletionResponse>,
+    },
+    Choose {
+        role: Role,
+        request: Box<ChooseRequest>,
+        response: Box<ChooseResponse>,
+    },
 }
 
 #[derive(Debug, Default, Clone)]
@@ -183,7 +189,7 @@ impl LlmActor {
     pub async fn chat_llm(
         &self,
         head: impl AsRef<str>,
-        role: Role,
+        role: &Role,
         prompt: impl AsRef<str>,
         prefix: impl AsRef<str>,
         bnf_schema: impl AsRef<str>,
@@ -255,20 +261,22 @@ impl LlmActor {
                 continue;
             }
 
-            let record = ChatRecord::new(role, content);
+            let record = ChatRecord::new(role.clone(), content);
             // bevy::log::info!("{head}[prompt] {prompt}{prefix}");
             bevy::log::info!("{head} {record}");
 
             {
-                let record = record.clone();
+                let role = role.clone();
                 let player = player.cloned();
                 let opponent = opponent.cloned();
-                self.history.lock().await.push(LlmRecord {
-                    request,
-                    response,
-                    record,
+                let request = Box::new(request);
+                let response = Box::new(response);
+                self.history.lock().await.push(LlmRecord::Completion {
+                    role,
                     player,
                     opponent,
+                    request,
+                    response,
                 });
             }
 
@@ -279,7 +287,7 @@ impl LlmActor {
     pub async fn choose_llm(
         &self,
         head: impl AsRef<str>,
-        role: Role,
+        role: &Role,
         prompt: impl AsRef<str>,
         choices: &[impl AsRef<str>],
     ) -> Vec<String> {
@@ -309,10 +317,21 @@ impl LlmActor {
 
             let choices = response
                 .data
-                .into_iter()
-                .map(|item| item.choice)
+                .iter()
+                .map(|item| item.choice.clone())
                 .collect_vec();
             bevy::log::info!("{head} {role}: {:?}", choices);
+
+            {
+                let role = role.clone();
+                let request = Box::new(request);
+                let response = Box::new(response);
+                self.history.lock().await.push(LlmRecord::Choose {
+                    role,
+                    request,
+                    response,
+                });
+            }
 
             break choices;
         }
@@ -403,7 +422,7 @@ impl LlmActor {
             let prompt = Self::prompt_role(&self.chat, &role);
             self.chat_llm(
                 format!("[notify][{}]", player.name),
-                role,
+                &role,
                 prompt,
                 // " Based on the situation and your current status,",
                 "",
@@ -479,7 +498,7 @@ impl LlmActor {
             };
             self.chat_llm(
                 format!("[chat][{round}]"),
-                role,
+                &role,
                 prompt,
                 "",
                 "",
@@ -524,28 +543,31 @@ impl LlmActor {
         let prompt = Self::prompt_role(&chat, &role);
 
         {
-            let choices = [" No, I don't want to", " Yes, I want to"];
+            let choices = [
+                " Hmm... Actually I don't want to",
+                " Hmm... I would like to",
+            ];
             let choices = self
                 .choose_llm(
                     format!("[trade][{item}][{}][0]", player.name),
-                    role.clone(),
+                    &role,
                     &prompt,
                     &choices,
                 )
                 .await;
             match choices[0].as_ref() {
-                " No, I don't want to" => return 0,
-                " Yes, I want to" => {}
+                " Hmm... Actually I don't want to" => return 0,
+                " Hmm... I would like to" => {}
                 _ => unreachable!(),
             }
         }
 
-        let prompt = format!("{prompt} Yes, I want to offer {}", opponent.name);
+        let prompt = format!("{prompt} Hmm... I would like to offer {}", opponent.name);
         let choices = choices.map(|x| format!(" {x}")).collect_vec();
         let choices = self
             .choose_llm(
                 format!("[trade][{item}][{}][1]", player.name),
-                role,
+                &role,
                 prompt,
                 &choices,
             )
@@ -579,7 +601,7 @@ impl LlmActor {
             };
             self.chat_llm(
                 "[trade][summarize]",
-                role,
+                &role,
                 prompt,
                 "",
                 "",
@@ -667,7 +689,7 @@ impl LlmActor {
             };
             self.chat_llm(
                 "[trade][accept]",
-                role,
+                &role,
                 prompt,
                 "",
                 "",
@@ -706,7 +728,7 @@ impl LlmActor {
             ];
             self.chat_llm(
                 "[trade][accept][confirm]",
-                role,
+                &role,
                 prompt,
                 fastrand::choice(&prefixes).unwrap(),
                 "start ::= \"Yes\\\".\" | \"No\\\".\";",
@@ -756,7 +778,7 @@ impl LlmActor {
             };
             self.chat_llm(
                 "[trade][feedback]",
-                role,
+                &role,
                 prompt,
                 "",
                 "",
@@ -797,7 +819,7 @@ impl LlmActor {
             let prompt = Self::prompt_role(&self.chat, &role);
             self.chat_llm(
                 format!("[bet][0][{}]", player.name),
-                role,
+                &role,
                 prompt,
                 " Let's analyze the situation.",
                 "",
@@ -821,7 +843,7 @@ impl LlmActor {
             };
             self.chat_llm(
                 "[bet][1]",
-                role,
+                &role,
                 prompt,
                 "",
                 "",
@@ -870,7 +892,7 @@ impl LlmActor {
             };
             self.chat_llm(
                 "[duel][accept]",
-                role,
+                &role,
                 prompt,
                 "",
                 "",
@@ -902,7 +924,7 @@ impl LlmActor {
             let choices = self
                 .choose_llm(
                     format!("[duel][card][{}]", player.name),
-                    role,
+                    &role,
                     prompt,
                     &choices,
                 )
@@ -962,7 +984,7 @@ impl LlmActor {
             };
             self.chat_llm(
                 "[duel][feedback]",
-                role,
+                &role,
                 prompt,
                 "",
                 "",
