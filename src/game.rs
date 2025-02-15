@@ -526,20 +526,26 @@ async fn dump_player(
 }
 
 fn dump_players(settings: Res<Settings>, players: Query<PlayerQuery>) {
-    let thread_pool = IoTaskPool::get();
+    let time = chrono::Local::now().format("%Y-%m-%d-%H-%M").to_string();
+    let path = settings.output.join(format!("output-{}", time));
+    if let Err(err) = std::fs::create_dir_all(&path) {
+        bevy::log::error!("{err}");
+    }
+
     for player in &players {
         let name = player.name.clone();
-        let path = settings.output.join(format!("{name}.json"));
+        let path = path.join(format!("{name}.json"));
         let actor = player.player.actor.clone();
         let player = player.into();
-        thread_pool
-            .spawn(async move {
-                match dump_player(&path, actor, &player).await {
-                    Ok(_) => bevy::log::info!("dumped {name} to {:?}", path),
-                    Err(err) => bevy::log::error!("{err}"),
-                }
-            })
-            .detach();
+
+        let pool = IoTaskPool::get();
+        pool.spawn(async move {
+            match dump_player(&path, actor, &player).await {
+                Ok(_) => bevy::log::info!("dumped {name} to {:?}", path),
+                Err(err) => bevy::log::error!("{err}"),
+            }
+        })
+        .detach();
     }
 }
 
