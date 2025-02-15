@@ -1,5 +1,5 @@
 /target
 .vscode/
 
-output/*.json
+output/**/*.json
 *.zip
