@@ -55,6 +55,12 @@ impl Plugin for GamePlugin {
     }
 }
 
+#[derive(Debug, Clone, Copy, Resource)]
+pub struct DumpPlayersSystem(pub SystemId);
+
+#[derive(Debug, Clone, Copy, Resource)]
+pub struct ExitSystem(pub SystemId);
+
 #[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone, Copy)]
 enum GameSet {
     Player,
@@ -306,9 +312,6 @@ pub enum DuelError {
     Scissors,
 }
 
-#[derive(Debug, Clone, Copy, Resource)]
-pub struct DumpPlayersSystem(pub SystemId);
-
 #[derive(Derivative, Component)]
 #[derivative(Debug)]
 pub struct Player {
@@ -377,6 +380,9 @@ fn setup_scene(mut commands: Commands, settings: Res<Settings>) {
     }));
 
     let system = DumpPlayersSystem(commands.register_system(dump_players));
+    commands.insert_resource(system);
+
+    let system = ExitSystem(commands.register_system(exit_system));
     commands.insert_resource(system);
 }
 
@@ -467,11 +473,13 @@ fn final_trade(
         (&Name, &mut Inventory),
         (With<Player>, Without<PlayerSafe>, Without<PlayerDead>),
     >,
-    system: Res<DumpPlayersSystem>,
+    dump_players_system: Res<DumpPlayersSystem>,
+    exit_system: Res<ExitSystem>,
 ) {
-    if *processed {
-        return;
-    }
+    *processed = match *processed {
+        true => return,
+        false => true,
+    };
 
     bevy::log::info!("Game Over");
 
@@ -506,23 +514,8 @@ fn final_trade(
         }
     }
 
-    commands.run_system(system.0);
-
-    *processed = true;
-}
-
-async fn dump_player(
-    path: impl AsRef<Path>,
-    actor: Arc<Mutex<dyn Actor>>,
-    player: &PlayerData,
-) -> Result<()> {
-    let actor = actor.lock().await;
-    let data = actor.dump(player).await?;
-
-    let mut file = File::create(path).await?;
-    file.write_all(&data).await?;
-
-    Ok(())
+    commands.run_system(dump_players_system.0);
+    commands.run_system(exit_system.0);
 }
 
 fn dump_players(settings: Res<Settings>, players: Query<PlayerQuery>) {
@@ -530,6 +523,20 @@ fn dump_players(settings: Res<Settings>, players: Query<PlayerQuery>) {
     let path = settings.output.join(format!("output-{}", time));
     if let Err(err) = std::fs::create_dir_all(&path) {
         bevy::log::error!("{err}");
+    }
+
+    async fn dump(
+        path: impl AsRef<Path>,
+        actor: Arc<Mutex<dyn Actor>>,
+        player: &PlayerData,
+    ) -> Result<()> {
+        let actor = actor.lock().await;
+        let data = actor.dump(player).await?;
+
+        let mut file = File::create(path).await?;
+        file.write_all(&data).await?;
+
+        Ok(())
     }
 
     for player in &players {
@@ -540,13 +547,17 @@ fn dump_players(settings: Res<Settings>, players: Query<PlayerQuery>) {
 
         let pool = IoTaskPool::get();
         pool.spawn(async move {
-            match dump_player(&path, actor, &player).await {
+            match dump(&path, actor, &player).await {
                 Ok(_) => bevy::log::info!("dumped {name} to {:?}", path),
                 Err(err) => bevy::log::error!("{err}"),
             }
         })
         .detach();
     }
+}
+
+fn exit_system(mut writer: EventWriter<AppExit>) {
+    writer.send(AppExit::Success);
 }
 
 #[derive(Debug, Component)]
