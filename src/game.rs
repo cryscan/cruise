@@ -14,7 +14,7 @@ use bevy::{
     utils::{BoxedFuture, ConditionalSend},
 };
 use derivative::Derivative;
-use futures::join;
+use futures::{future::join_all, join};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -539,7 +539,7 @@ fn dump_players(settings: Res<Settings>, players: Query<PlayerQuery>) {
         Ok(())
     }
 
-    for player in &players {
+    let tasks = players.iter().map(|player| {
         let name = player.name.clone();
         let path = path.join(format!("{name}.json"));
         let actor = player.player.actor.clone();
@@ -552,8 +552,8 @@ fn dump_players(settings: Res<Settings>, players: Query<PlayerQuery>) {
                 Err(err) => bevy::log::error!("{err}"),
             }
         })
-        .detach();
-    }
+    });
+    block_on(join_all(tasks));
 }
 
 fn exit_system(mut writer: EventWriter<AppExit>) {
